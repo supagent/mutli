@@ -3,6 +3,7 @@ import type { ConnectionState } from "../shared/gateway-sdk/types.js";
 import { AsyncAgent } from "../agent/async-agent.js";
 import { getDeviceId } from "./device.js";
 import { GatewayClient } from "../shared/gateway-sdk/client.js";
+import { loadAgentRecords, addAgentRecord, removeAgentRecord } from "./agent-store.js";
 
 export class Hub {
   private readonly agents = new Map<string, AsyncAgent>();
@@ -23,6 +24,18 @@ export class Hub {
     this.deviceId = getDeviceId();
     this.client = this.createClient(this.url);
     this.client.connect();
+    this.restoreAgents();
+  }
+
+  /** Restore agents from persistent storage */
+  private restoreAgents(): void {
+    const records = loadAgentRecords();
+    for (const record of records) {
+      this.createAgent(record.id, { persist: false });
+    }
+    if (records.length > 0) {
+      console.log(`[Hub] Restored ${records.length} agent(s)`);
+    }
   }
 
   private createClient(url: string): GatewayClient {
@@ -82,7 +95,7 @@ export class Hub {
   }
 
   /** Create new Agent, or rebuild with existing ID */
-  createAgent(id?: string): AsyncAgent {
+  createAgent(id?: string, options?: { persist?: boolean }): AsyncAgent {
     if (id) {
       const existing = this.agents.get(id);
       if (existing && !existing.closed) {
@@ -92,6 +105,11 @@ export class Hub {
 
     const agent = new AsyncAgent({ sessionId: id });
     this.agents.set(agent.sessionId, agent);
+
+    // Persist to agent store (skip during restore to avoid duplicates)
+    if (options?.persist !== false) {
+      addAgentRecord({ id: agent.sessionId, createdAt: Date.now() });
+    }
 
     // Internally consume messages produced by agent
     void this.consumeAgent(agent);
@@ -130,6 +148,7 @@ export class Hub {
     agent.close();
     this.agents.delete(id);
     this.agentSenders.delete(id);
+    removeAgentRecord(id);
     return true;
   }
 

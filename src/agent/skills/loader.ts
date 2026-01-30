@@ -5,17 +5,17 @@
  */
 
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Skill, SkillSource, SkillManagerOptions } from "./types.js";
 import { SKILL_FILE, SKILL_SOURCE_PRECEDENCE } from "./types.js";
 import { parseSkillFile } from "./parser.js";
+import { DATA_DIR } from "../../shared/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Default profile base directory */
-const DEFAULT_PROFILE_BASE_DIR = join(homedir(), ".super-multica", "agent-profiles");
+const DEFAULT_PROFILE_BASE_DIR = join(DATA_DIR, "agent-profiles");
 
 /** Bundled skills directory (relative to package) */
 const BUNDLED_DIR = join(__dirname, "../../../skills");

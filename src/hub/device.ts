@@ -1,10 +1,9 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { v7 as uuidv7 } from "uuid";
+import { DATA_DIR } from "../shared/index.js";
 
-const MULTICA_DIR = join(homedir(), ".multica");
-const DEVICE_ID_FILE = join(MULTICA_DIR, "device-id");
+const DEVICE_ID_FILE = join(DATA_DIR, "device-id");
 
 /**
  * 获取当前设备的 ID。
@@ -16,7 +15,7 @@ export function getDeviceId(): string {
     return readFileSync(DEVICE_ID_FILE, "utf-8").trim();
   } catch {
     const id = uuidv7();
-    mkdirSync(MULTICA_DIR, { recursive: true });
+    mkdirSync(DATA_DIR, { recursive: true });
     writeFileSync(DEVICE_ID_FILE, id, "utf-8");
     return id;
   }

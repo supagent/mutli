@@ -1,15 +1,15 @@
-import { homedir } from "os";
 import { join } from "path";
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { appendFile, writeFile } from "fs/promises";
 import type { SessionEntry } from "./types.js";
+import { DATA_DIR } from "../../shared/index.js";
 
 export type SessionStorageOptions = {
   baseDir?: string | undefined;
 };
 
 export function resolveBaseDir(options?: SessionStorageOptions) {
-  return options?.baseDir ?? join(homedir(), ".super-multica", "sessions");
+  return options?.baseDir ?? join(DATA_DIR, "sessions");
 }
 
 export function resolveSessionDir(sessionId: string, options?: SessionStorageOptions) {

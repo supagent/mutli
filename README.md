@@ -33,8 +33,49 @@ skills/                 # Bundled skills (commit, code-review)
 
 ```bash
 pnpm install
-pnpm dev
 ```
+
+### Environment Configuration
+
+The Agent requires LLM provider credentials. Copy the example and fill in your values:
+
+```bash
+cp .env.example .env
+# Edit .env with your API keys
+```
+
+Example `.env` for OpenAI:
+
+```bash
+export LLM_PROVIDER=openai
+export OPENAI_API_KEY=sk-xxx
+export OPENAI_BASE_URL=https://api.openai.com/v1
+export OPENAI_MODEL=gpt-4o
+```
+
+Load the environment before starting services that use the Agent:
+
+```bash
+# Hub Console (requires LLM env vars)
+source .env && pnpm dev:console
+
+# Agent CLI
+source .env && pnpm agent:cli "hello"
+
+# Gateway (no LLM env vars needed)
+pnpm dev:gateway
+```
+
+See `.env.example` for all supported providers (OpenAI, Anthropic, DeepSeek, Kimi, Groq, Mistral, etc.).
+
+### Configuration Priority
+
+Each setting is resolved in order (first match wins):
+
+1. **CLI argument** — `--provider`, `--model`, `--api-key`, `--base-url`
+2. **Environment variable** — `LLM_PROVIDER`, `OPENAI_MODEL`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, etc.
+3. **Session metadata** — restored from previous session
+4. **Default** — `kimi-coding` provider with `kimi-k2-thinking` model
 
 ## Agent CLI
 

@@ -5,6 +5,8 @@ type CliOptions = {
   profile?: string | undefined;
   provider?: string | undefined;
   model?: string | undefined;
+  apiKey?: string | undefined;
+  baseUrl?: string | undefined;
   system?: string | undefined;
   thinking?: string | undefined;
   cwd?: string | undefined;
@@ -21,6 +23,8 @@ function printUsage() {
   console.log("  --profile ID     Load agent profile (identity, soul, tools, memory)");
   console.log("  --provider NAME  LLM provider (e.g., openai, anthropic, kimi)");
   console.log("  --model NAME     Model name");
+  console.log("  --api-key KEY    API key (overrides environment variable)");
+  console.log("  --base-url URL   Custom base URL for the provider");
   console.log("  --system TEXT    System prompt (ignored if --profile is set)");
   console.log("  --thinking LEVEL Thinking level");
   console.log("  --cwd DIR        Working directory for commands");
@@ -51,6 +55,14 @@ function parseArgs(argv: string[]) {
     }
     if (arg === "--model") {
       opts.model = args.shift();
+      continue;
+    }
+    if (arg === "--api-key") {
+      opts.apiKey = args.shift();
+      continue;
+    }
+    if (arg === "--base-url") {
+      opts.baseUrl = args.shift();
       continue;
     }
     if (arg === "--system") {
@@ -112,6 +124,8 @@ async function main() {
     profileId: opts.profile,
     provider: opts.provider,
     model: opts.model,
+    apiKey: opts.apiKey,
+    baseUrl: opts.baseUrl,
     systemPrompt: opts.system,
     thinkingLevel: opts.thinking as any,
     cwd: opts.cwd,

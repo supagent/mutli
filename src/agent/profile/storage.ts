@@ -3,11 +3,11 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { PROFILE_FILES, type AgentProfile } from "./types.js";
+import { DATA_DIR } from "../../shared/index.js";
 
-const DEFAULT_BASE_DIR = join(homedir(), ".super-multica", "agent-profiles");
+const DEFAULT_BASE_DIR = join(DATA_DIR, "agent-profiles");
 
 export interface StorageOptions {
   baseDir?: string | undefined;

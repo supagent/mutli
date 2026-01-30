@@ -17,6 +17,10 @@ export type AgentOptions = {
   profileBaseDir?: string | undefined;
   provider?: string | undefined;
   model?: string | undefined;
+  /** Custom API key (overrides environment variable) */
+  apiKey?: string | undefined;
+  /** Custom base URL for the provider endpoint */
+  baseUrl?: string | undefined;
   /** System prompt, if profileId is set will auto-construct from profile */
   systemPrompt?: string | undefined;
   thinkingLevel?: ThinkingLevel | undefined;

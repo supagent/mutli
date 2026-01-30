@@ -14,6 +14,7 @@ release
 
 # env
 .env*
+!.env.example
 
 # platform specific
 *.dmg
