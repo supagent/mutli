@@ -20,6 +20,7 @@ export {
   releaseSubagentRun,
   getSubagentRun,
   resetSubagentRegistryForTests,
+  shutdownSubagentRegistry,
 } from "./registry.js";
 
 export {

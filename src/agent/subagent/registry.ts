@@ -5,7 +5,7 @@
  * watches for child completion, and triggers announce flow.
  */
 
-import { getHub } from "../../hub/hub-singleton.js";
+import { getHub, isHubInitialized } from "../../hub/hub-singleton.js";
 import { loadSubagentRuns, saveSubagentRuns } from "./registry-store.js";
 import { runSubagentAnnounceFlow } from "./announce.js";
 import type {
@@ -128,6 +128,27 @@ export function getSubagentRun(runId: string): SubagentRunRecord | undefined {
   return subagentRuns.get(runId);
 }
 
+/** Mark all active (non-ended) runs as ended with "unknown" status. Called during Hub shutdown. */
+export function shutdownSubagentRegistry(): void {
+  const now = Date.now();
+  let updated = 0;
+
+  for (const record of subagentRuns.values()) {
+    if (!record.endedAt) {
+      record.endedAt = now;
+      record.outcome = { status: "unknown" };
+      updated++;
+    }
+  }
+
+  if (updated > 0) {
+    persist();
+    console.log(`[SubagentRegistry] Marked ${updated} active run(s) as ended during shutdown`);
+  }
+
+  stopSweeper();
+}
+
 /** Reset all state (for testing). */
 export function resetSubagentRegistryForTests(): void {
   subagentRuns.clear();
@@ -140,78 +161,65 @@ export function resetSubagentRegistryForTests(): void {
 // ============================================================================
 
 function watchChildAgent(record: SubagentRunRecord, timeoutSeconds?: number): void {
-  const { runId, childSessionId } = record;
+  const { childSessionId } = record;
 
   // Mark as started
   record.startedAt = Date.now();
   persist();
 
+  const cleanup = (outcome: { status: "ok" | "error" | "timeout" | "unknown"; error?: string | undefined }) => {
+    if (record.endedAt) return; // Already finalized
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    record.endedAt = Date.now();
+    record.outcome = outcome;
+    persist();
+    handleRunCompletion(record);
+  };
+
   // Set up timeout if specified
   let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
   if (timeoutSeconds && timeoutSeconds > 0) {
     timeoutTimer = setTimeout(() => {
-      if (!record.endedAt) {
-        record.endedAt = Date.now();
-        record.outcome = { status: "timeout" };
-        persist();
+      cleanup({ status: "timeout" });
 
-        // Try to close the child agent
-        try {
-          const hub = getHub();
-          hub.closeAgent(childSessionId);
-        } catch {
-          // Hub may not be available
-        }
-
-        handleRunCompletion(record);
+      // Try to close the child agent
+      try {
+        const hub = getHub();
+        hub.closeAgent(childSessionId);
+      } catch {
+        // Hub may not be available
       }
     }, timeoutSeconds * 1000);
   }
 
-  // Watch the child agent's channel for closure
-  void (async () => {
-    try {
-      const hub = getHub();
-      const childAgent = hub.getAgent(childSessionId);
-      if (!childAgent) {
-        record.endedAt = Date.now();
-        record.outcome = { status: "error", error: "Child agent not found" };
-        persist();
-        handleRunCompletion(record);
-        return;
-      }
+  // Get child agent reference (Hub may not be available in tests)
+  if (!isHubInitialized()) {
+    cleanup({ status: "error", error: "Hub not initialized" });
+    return;
+  }
 
-      // Consume the child's output stream — when it ends, the agent is done
-      for await (const item of childAgent.read()) {
-        // Check for error messages
-        if ("content" in item && typeof item.content === "string" && item.content.startsWith("[error]")) {
-          record.outcome = { status: "error", error: item.content };
-        }
-      }
+  const hub = getHub();
+  const childAgent = hub.getAgent(childSessionId);
+  if (!childAgent) {
+    cleanup({ status: "error", error: "Child agent not found" });
+    return;
+  }
 
-      // Stream ended — child agent completed
-      if (!record.endedAt) {
-        if (timeoutTimer) clearTimeout(timeoutTimer);
-        record.endedAt = Date.now();
-        if (!record.outcome) {
-          record.outcome = { status: "ok" };
-        }
-        persist();
-        handleRunCompletion(record);
-      }
-    } catch (err) {
-      if (!record.endedAt) {
-        if (timeoutTimer) clearTimeout(timeoutTimer);
-        record.endedAt = Date.now();
-        record.outcome = {
-          status: "error",
-          error: err instanceof Error ? err.message : String(err),
-        };
-        persist();
-        handleRunCompletion(record);
-      }
-    }
-  })();
+  // Wait for the child agent's task queue to drain (task completion),
+  // then trigger announce flow. Uses waitForIdle() instead of consuming
+  // the stream (which would conflict with Hub.consumeAgent).
+  childAgent.waitForIdle().then(
+    () => cleanup({ status: "ok" }),
+    (err) => cleanup({
+      status: "error",
+      error: err instanceof Error ? err.message : String(err),
+    }),
+  );
+
+  // Also handle explicit close (e.g., timeout kill, Hub shutdown)
+  childAgent.onClose(() => {
+    cleanup({ status: record.outcome?.status ?? "unknown" });
+  });
 }
 
 // ============================================================================
@@ -292,8 +300,9 @@ function sweep(): void {
   let removed = 0;
 
   for (const [runId, record] of subagentRuns) {
-    if (record.archiveAtMs && record.archiveAtMs <= now) {
+    if (record.archiveAtMs !== undefined && record.archiveAtMs <= now) {
       subagentRuns.delete(runId);
+      resumedRuns.delete(runId);
       removed++;
     }
   }
