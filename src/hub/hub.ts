@@ -256,6 +256,18 @@ export class Hub {
           content: item.content,
         });
       } else {
+        // Compaction events: forward with synthetic streamId (no stream tracking)
+        const isCompactionEvent =
+          item.type === "compaction_start" || item.type === "compaction_end";
+        if (isCompactionEvent) {
+          this.client.send(targetDeviceId, StreamAction, {
+            streamId: `compaction:${agent.sessionId}`,
+            agentId: agent.sessionId,
+            event: item,
+          });
+          continue;
+        }
+
         // Filter: only forward events useful for frontend rendering
         const maybeMessage = (item as { message?: { role?: string } }).message;
         const isAssistantMessage = maybeMessage?.role === "assistant";

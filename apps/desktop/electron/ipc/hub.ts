@@ -280,6 +280,19 @@ export function registerHubIpcHandlers(): void {
         return
       }
 
+      // Compaction events: forward with no stream tracking
+      const isCompactionEvent =
+        event.type === 'compaction_start' || event.type === 'compaction_end'
+      if (isCompactionEvent) {
+        safeLog(`[IPC] Sending compaction event to renderer: ${event.type}`)
+        mainWindowRef.webContents.send('localChat:event', {
+          agentId,
+          streamId: null,
+          event,
+        })
+        return
+      }
+
       // Filter events same as Hub.consumeAgent()
       const maybeMessage = (event as { message?: { role?: string } }).message
       const isAssistantMessage = maybeMessage?.role === 'assistant'

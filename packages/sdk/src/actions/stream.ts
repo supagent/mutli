@@ -25,16 +25,36 @@ export type { AgentEvent };
  */
 export type ContentBlock = TextContent | ThinkingContent | ToolCall | ImageContent;
 
+// --- Compaction event types (Multica-specific, not from pi-agent-core) ---
+
+/** Emitted when context compaction begins */
+export type CompactionStartEvent = {
+  type: "compaction_start";
+};
+
+/** Emitted when context compaction completes */
+export type CompactionEndEvent = {
+  type: "compaction_end";
+  removed: number;
+  kept: number;
+  tokensRemoved?: number;
+  tokensKept?: number;
+  reason: string;
+};
+
+/** Union of all compaction events */
+export type CompactionEvent = CompactionStartEvent | CompactionEndEvent;
+
 // --- Stream event types ---
 
 /**
- * Hub forwards AgentEvent from pi-agent-core as-is.
- * StreamPayload wraps it with routing metadata.
+ * Hub forwards AgentEvent from pi-agent-core and CompactionEvent as-is.
+ * StreamPayload wraps them with routing metadata.
  */
 export interface StreamPayload {
   streamId: string;
   agentId: string;
-  event: AgentEvent;
+  event: AgentEvent | CompactionEvent;
 }
 
 /** Extract thinking/reasoning content from an AgentEvent that carries a message */

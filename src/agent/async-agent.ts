@@ -3,11 +3,12 @@ import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import { Agent } from "./runner.js";
 import { Channel } from "./channel.js";
 import type { AgentOptions, Message } from "./types.js";
+import type { MulticaEvent } from "./events.js";
 
 const devNull = { write: () => true } as unknown as NodeJS.WritableStream;
 
-/** Discriminated union of legacy Message (error fallback) and raw AgentEvent */
-export type ChannelItem = Message | AgentEvent;
+/** Discriminated union of legacy Message, raw AgentEvent, and MulticaEvent */
+export type ChannelItem = Message | AgentEvent | MulticaEvent;
 
 export class AsyncAgent {
   private readonly agent: Agent;
@@ -24,8 +25,8 @@ export class AsyncAgent {
     });
     this.sessionId = this.agent.sessionId;
 
-    // Forward raw AgentEvent into the channel
-    this.agent.subscribe((event: AgentEvent) => {
+    // Forward raw AgentEvent and MulticaEvent into the channel
+    this.agent.subscribeAll((event: AgentEvent | MulticaEvent) => {
       this.channel.send(event);
     });
   }
@@ -64,10 +65,11 @@ export class AsyncAgent {
   /**
    * Subscribe to agent events directly (supports multiple subscribers).
    * Unlike read(), this allows multiple consumers to receive the same events.
+   * Receives both pi-agent-core AgentEvent and MulticaEvent (e.g. compaction).
    */
-  subscribe(callback: (event: AgentEvent) => void): () => void {
+  subscribe(callback: (event: AgentEvent | MulticaEvent) => void): () => void {
     console.log(`[AsyncAgent] Adding subscriber for agent: ${this.sessionId}`);
-    const unsubscribe = this.agent.subscribe((event) => {
+    const unsubscribe = this.agent.subscribeAll((event) => {
       console.log(`[AsyncAgent] Event received: ${event.type}`);
       callback(event);
     });

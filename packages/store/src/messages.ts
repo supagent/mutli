@@ -15,6 +15,14 @@ import type { ContentBlock } from "@multica/sdk"
 
 export type ToolStatus = "running" | "success" | "error" | "interrupted"
 
+export interface CompactionStats {
+  removed: number
+  kept: number
+  tokensRemoved?: number
+  tokensKept?: number
+  reason: string
+}
+
 export interface Message {
   id: string
   role: "user" | "assistant" | "toolResult"
@@ -40,6 +48,8 @@ export interface SendContext {
 interface MessagesState {
   messages: Message[]
   streamingIds: Set<string>
+  compacting: boolean
+  lastCompaction: CompactionStats | null
 }
 
 interface MessagesActions {
@@ -56,6 +66,9 @@ interface MessagesActions {
   // Tool execution lifecycle
   startToolExecution: (agentId: string, toolCallId: string, toolName: string, args?: unknown) => void
   endToolExecution: (toolCallId: string, result?: unknown, isError?: boolean) => void
+  // Compaction lifecycle
+  startCompaction: () => void
+  endCompaction: (stats: CompactionStats) => void
 }
 
 export type MessagesStore = MessagesState & MessagesActions
@@ -63,6 +76,8 @@ export type MessagesStore = MessagesState & MessagesActions
 export const useMessagesStore = create<MessagesStore>()((set, get) => ({
   messages: [],
   streamingIds: new Set<string>(),
+  compacting: false,
+  lastCompaction: null,
 
   sendMessage: (text, ctx) => {
     get().addUserMessage(text, ctx.agentId)
@@ -102,7 +117,7 @@ export const useMessagesStore = create<MessagesStore>()((set, get) => ({
   },
 
   clearMessages: () => {
-    set({ messages: [], streamingIds: new Set() })
+    set({ messages: [], streamingIds: new Set(), compacting: false, lastCompaction: null })
   },
 
   // --- Streaming: build assistant message incrementally ---
@@ -179,5 +194,15 @@ export const useMessagesStore = create<MessagesStore>()((set, get) => ({
           : m
       ),
     }))
+  },
+
+  // --- Compaction lifecycle ---
+
+  startCompaction: () => {
+    set({ compacting: true })
+  },
+
+  endCompaction: (stats) => {
+    set({ compacting: false, lastCompaction: stats })
   },
 }))

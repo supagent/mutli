@@ -6,7 +6,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useMessagesStore } from '@multica/store'
-import type { ContentBlock } from '@multica/sdk'
+import type { ContentBlock, CompactionEndEvent } from '@multica/sdk'
 
 interface UseLocalChatOptions {
   agentId: string
@@ -78,7 +78,26 @@ export function useLocalChat({ agentId }: UseLocalChatOptions): UseLocalChatRetu
       // Handle agent events - same logic as connection-store.ts
       const agentEvent = event.event
       const streamId = event.streamId
-      if (!agentEvent || !streamId) return
+      if (!agentEvent) return
+
+      // Handle compaction events (no streamId required)
+      if (agentEvent.type === 'compaction_start') {
+        store.startCompaction()
+        return
+      }
+      if (agentEvent.type === 'compaction_end') {
+        const evt = agentEvent as CompactionEndEvent
+        store.endCompaction({
+          removed: evt.removed,
+          kept: evt.kept,
+          tokensRemoved: evt.tokensRemoved,
+          tokensKept: evt.tokensKept,
+          reason: evt.reason,
+        })
+        return
+      }
+
+      if (!streamId) return
 
       if (agentEvent.type === 'message_start') {
         currentStreamRef.current = streamId

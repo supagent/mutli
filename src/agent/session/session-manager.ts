@@ -3,6 +3,7 @@ import { getModel, type Model } from "@mariozechner/pi-ai";
 import type { SessionEntry, SessionMeta } from "./types.js";
 import { appendEntry, readEntries, resolveSessionPath, writeEntries } from "./storage.js";
 import { compactMessages, compactMessagesAsync } from "./compaction.js";
+import { estimateTokenUsage, shouldCompact as shouldCompactTokens } from "../context-window/index.js";
 import { credentialManager } from "../credentials.js";
 import { repairSessionFileIfNeeded, type RepairReport } from "./session-file-repair.js";
 import { sanitizeToolCallInputs, sanitizeToolUseResultPairing } from "./session-transcript-repair.js";
@@ -191,6 +192,21 @@ export class SessionManager {
         { baseDir: this.baseDir },
       ),
     );
+  }
+
+  /** Check whether compaction would trigger for the given messages (without executing it) */
+  needsCompaction(messages: AgentMessage[]): boolean {
+    if (this.compactionMode === "count") {
+      return messages.length > this.maxMessages;
+    }
+    // Token and summary modes use the same token-based threshold
+    const estimation = estimateTokenUsage({
+      messages,
+      systemPrompt: this.systemPrompt,
+      contextWindowTokens: this.contextWindowTokens,
+      reserveTokens: this.reserveTokens,
+    });
+    return shouldCompactTokens(estimation);
   }
 
   async maybeCompact(messages: AgentMessage[]) {

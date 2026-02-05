@@ -72,7 +72,7 @@ export interface LocalChatEvent {
   type?: 'error'
   content?: string
   event?: {
-    type: 'message_start' | 'message_update' | 'message_end' | 'tool_execution_start' | 'tool_execution_end'
+    type: 'message_start' | 'message_update' | 'message_end' | 'tool_execution_start' | 'tool_execution_end' | 'compaction_start' | 'compaction_end'
     id?: string
     message?: {
       role: string
