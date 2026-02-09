@@ -6,7 +6,7 @@
  * 2. profile - ~/.super-multica/agent-profiles/<id>/skills/ (profile-specific)
  */
 
-import { existsSync, readdirSync, statSync, mkdirSync, cpSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, mkdirSync, cpSync, rmSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Skill, SkillSource, SkillManagerOptions } from "./types.js";
@@ -46,6 +46,31 @@ const BUNDLED_DIR = join(__dirname, "../../../skills");
 
 /** Managed skills directory (global user skills) */
 const MANAGED_DIR = join(DATA_DIR, "skills");
+
+/** Manifest file tracking which skills were synced from the bundle */
+const BUNDLED_MANIFEST = join(MANAGED_DIR, ".bundled-manifest.json");
+
+/**
+ * Read the bundled skills manifest
+ * Returns a set of skill IDs that were last synced from the bundle
+ */
+function readBundledManifest(): Set<string> {
+  try {
+    if (!existsSync(BUNDLED_MANIFEST)) return new Set();
+    const data = JSON.parse(readFileSync(BUNDLED_MANIFEST, "utf-8"));
+    if (Array.isArray(data)) return new Set(data as string[]);
+    return new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Write the bundled skills manifest
+ */
+function writeBundledManifest(skillIds: Set<string>): void {
+  writeFileSync(BUNDLED_MANIFEST, JSON.stringify([...skillIds].sort(), null, 2) + "\n");
+}
 
 /**
  * Discover skill directories in a given base path
@@ -153,6 +178,9 @@ export function initializeManagedSkills(): void {
     return;
   }
 
+  const previouslyBundled = readBundledManifest();
+  const currentlyBundled = new Set<string>();
+
   // Sync each bundled skill to managed directory
   try {
     const entries = readdirSync(BUNDLED_DIR);
@@ -165,6 +193,8 @@ export function initializeManagedSkills(): void {
 
       // Skip if not a directory
       if (!statSync(src).isDirectory()) continue;
+
+      currentlyBundled.add(skillName);
 
       // Check if skill exists in managed
       if (!existsSync(dest)) {
@@ -189,6 +219,19 @@ export function initializeManagedSkills(): void {
         cpSync(src, dest, { recursive: true });
       }
     }
+
+    // Remove managed skills that were previously bundled but no longer in the bundle
+    for (const skillName of previouslyBundled) {
+      if (!currentlyBundled.has(skillName)) {
+        const dest = join(MANAGED_DIR, skillName);
+        if (existsSync(dest)) {
+          rmSync(dest, { recursive: true });
+        }
+      }
+    }
+
+    // Persist updated manifest
+    writeBundledManifest(currentlyBundled);
   } catch {
     // Ignore errors during initialization
   }
