@@ -15,6 +15,15 @@ else
   echo "  $MULTICA_DATA_DIR does not exist, skipping"
 fi
 
+# Dev data directory (used by pnpm dev:local)
+MULTICA_DEV_DIR="$HOME/.super-multica-dev"
+if [ -d "$MULTICA_DEV_DIR" ]; then
+  echo "  Removing $MULTICA_DEV_DIR"
+  rm -rf "$MULTICA_DEV_DIR"
+else
+  echo "  $MULTICA_DEV_DIR does not exist, skipping"
+fi
+
 # Electron app data (macOS)
 if [[ "$OSTYPE" == "darwin"* ]]; then
   ELECTRON_APP_DATA="$HOME/Library/Application Support/super-multica"

@@ -7,14 +7,11 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, renameSync } from "fs";
 import path from "path";
+import { DATA_DIR } from "@multica/utils";
 import type { CronJob, CronRunLogEntry } from "./types.js";
 
 /** Default cron storage directory */
-const DEFAULT_CRON_DIR = path.join(
-  process.env["HOME"] ?? ".",
-  ".super-multica",
-  "cron",
-);
+const DEFAULT_CRON_DIR = path.join(DATA_DIR, "cron");
 
 /** Store data structure */
 type StoreData = {
