@@ -422,29 +422,41 @@ export class Hub {
       }
 
       // Non-RPC messages also require verified device
-      const payload = msg.payload as { agentId?: string; conversationId?: string; content?: string } | undefined;
+      const payload = msg.payload as {
+        agentId?: string;
+        conversationId?: string;
+        sessionId?: string;
+        content?: string;
+      } | undefined;
       if (!this.deviceStore.isAllowed(msg.from)) {
         console.warn(`[Hub] Rejected message from unverified device: ${msg.from}`);
+        const inboundSessionId = payload?.sessionId ?? payload?.conversationId;
         this.client.send(msg.from, "error", {
           code: "UNAUTHORIZED",
           message: "Device not verified. Please complete verification first.",
           messageId: msg.id,
+          ...(inboundSessionId ? { conversationId: inboundSessionId, sessionId: inboundSessionId } : {}),
         });
         return;
       }
       const incomingAgentId = payload?.agentId;
-      const conversationId = this.resolveConversationId(incomingAgentId, payload?.conversationId);
+      const conversationId = this.resolveConversationId(
+        incomingAgentId,
+        payload?.sessionId ?? payload?.conversationId,
+      );
       const agentId = this.resolveAgentId(incomingAgentId, conversationId);
       const content = payload?.content;
-      if (!incomingAgentId || !content) {
-        console.warn(`[Hub] Invalid payload, missing agentId or content`);
+      if (!content) {
+        console.warn("[Hub] Invalid payload, missing content");
         return;
       }
       if (!conversationId) {
+        const inboundSessionId = payload?.sessionId ?? payload?.conversationId;
         this.client.send(msg.from, "error", {
           code: "INVALID_PARAMS",
-          message: "Unable to resolve conversationId. Please provide a valid conversationId.",
+          message: "Unable to resolve sessionId (conversationId). Please provide a valid sessionId.",
           messageId: msg.id,
+          ...(inboundSessionId ? { conversationId: inboundSessionId, sessionId: inboundSessionId } : {}),
         });
         return;
       }
@@ -456,6 +468,8 @@ export class Hub {
           code: "UNAUTHORIZED",
           message: "Device is not authorized for this conversation.",
           messageId: msg.id,
+          conversationId,
+          sessionId: conversationId,
         });
         return;
       }
@@ -468,6 +482,8 @@ export class Hub {
           code: "UNAUTHORIZED",
           message: "Device is not authorized for this agent.",
           messageId: msg.id,
+          conversationId,
+          sessionId: conversationId,
         });
         return;
       }
@@ -746,6 +762,7 @@ export class Hub {
         this.client.send(targetDeviceId, "message", {
           agentId,
           conversationId,
+          sessionId: conversationId,
           content: item.content,
         });
       } else {
@@ -771,6 +788,7 @@ export class Hub {
             streamId: `system:${conversationId}`,
             agentId,
             conversationId,
+            sessionId: conversationId,
             event: item,
           });
           continue;
@@ -814,6 +832,7 @@ export class Hub {
               streamId,
               agentId: pendingStart.agentId,
               conversationId: pendingStart.conversationId,
+              sessionId: pendingStart.conversationId,
               event: pendingStart.event,
             });
             this.pendingAssistantStarts.delete(streamId);
@@ -823,6 +842,7 @@ export class Hub {
             streamId,
             agentId,
             conversationId,
+            sessionId: conversationId,
             event: item,
           });
           if (item.type === "message_end") {
@@ -836,6 +856,7 @@ export class Hub {
           streamId,
           agentId,
           conversationId,
+          sessionId: conversationId,
           event: item,
         });
       }
@@ -1002,6 +1023,8 @@ export class Hub {
             type,
             caption,
             filename: basename(filePath),
+            conversationId: sessionId,
+            sessionId,
           });
           console.log(`[Hub] Sent file via gateway: ${basename(filePath)} → ${deviceId}`);
           return true;

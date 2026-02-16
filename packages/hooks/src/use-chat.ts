@@ -295,7 +295,7 @@ export function useChat() {
   /** Process a StreamPayload → update messages + streamingIds */
   const handleStream = useCallback((payload: StreamPayload) => {
     const { event } = payload;
-    const conversationId = payload.conversationId ?? payload.agentId;
+    const sessionId = payload.sessionId ?? payload.conversationId ?? payload.agentId;
 
     switch (event.type) {
       case "message_start": {
@@ -304,7 +304,7 @@ export function useChat() {
           role: "assistant",
           content: [],
           agentId: payload.agentId,
-          conversationId,
+          conversationId: sessionId,
         };
         const content = extractContent(event);
         if (content.length) newMsg.content = content;
@@ -334,7 +334,7 @@ export function useChat() {
               m.role === "toolResult"
               && m.toolStatus === "running"
               && m.agentId === payload.agentId
-              && (m.conversationId ?? m.agentId) === conversationId
+              && (m.conversationId ?? m.agentId) === sessionId
             ) {
               return { ...m, toolStatus: "interrupted" as ToolStatus };
             }
@@ -356,7 +356,7 @@ export function useChat() {
             role: "toolResult",
             content: [],
             agentId: payload.agentId,
-            conversationId,
+            conversationId: sessionId,
             toolCallId: event.toolCallId,
             toolName: event.toolName,
             toolArgs: event.args as Record<string, unknown> | undefined,
@@ -409,7 +409,7 @@ export function useChat() {
             role: "system",
             content: [],
             agentId: payload.agentId,
-            conversationId,
+            conversationId: sessionId,
             systemType: "compaction",
             compaction: {
               removed: ce.removed,

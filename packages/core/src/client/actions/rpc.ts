@@ -179,6 +179,8 @@ export interface VerifyResult {
   agentId: string;
   /** Authorized conversation scope for this device. */
   conversationId?: string;
+  /** Session ID alias (same value as conversationId). */
+  sessionId?: string;
   /** Backward-compatible alias for conversationId. */
   mainConversationId?: string;
 }

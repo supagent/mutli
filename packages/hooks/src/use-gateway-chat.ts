@@ -54,7 +54,7 @@ export function useGatewayChat({ client, hubId, agentId, conversationId }: UseGa
     client.onMessage((msg) => {
       if (msg.action === StreamAction) {
         const payload = msg.payload as StreamPayload;
-        const payloadConversationId = payload.conversationId ?? payload.agentId;
+        const payloadConversationId = payload.sessionId ?? payload.conversationId ?? payload.agentId;
         if (payload.agentId !== agentId || payloadConversationId !== resolvedConversationId) {
           return;
         }
@@ -71,7 +71,7 @@ export function useGatewayChat({ client, hubId, agentId, conversationId }: UseGa
       }
       if (msg.action === ExecApprovalRequestAction) {
         const approval = msg.payload as ExecApprovalRequestPayload;
-        const approvalConversationId = approval.conversationId ?? approval.agentId;
+        const approvalConversationId = approval.sessionId ?? approval.conversationId ?? approval.agentId;
         if (approval.agentId !== agentId || approvalConversationId !== resolvedConversationId) {
           return;
         }
@@ -92,7 +92,12 @@ export function useGatewayChat({ client, hubId, agentId, conversationId }: UseGa
       if (!trimmed) return;
       chat.addUserMessage(trimmed, agentId, { type: "local" }, resolvedConversationId);
       chat.setError(null);
-      client.send(hubId, "message", { agentId, conversationId: resolvedConversationId, content: trimmed });
+      client.send(hubId, "message", {
+        agentId,
+        conversationId: resolvedConversationId,
+        sessionId: resolvedConversationId,
+        content: trimmed,
+      });
       setIsLoading(true);
     },
     [client, hubId, agentId, resolvedConversationId],

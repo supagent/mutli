@@ -1372,8 +1372,9 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
           ? `Telegram @${msg.from.username}`
           : `Telegram ${msg?.from?.first_name ?? telegramUserId}`,
       });
-      const mainConversationId =
+      const sessionId =
         connectionInfo.conversationId
+        ?? result.sessionId
         ?? result.conversationId
         ?? result.mainConversationId
         ?? result.agentId;
@@ -1383,7 +1384,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         telegramUserId,
         hubId: connectionInfo.hubId,
         agentId: connectionInfo.agentId,
-        conversationId: mainConversationId,
+        conversationId: sessionId,
         deviceId,
         telegramUsername: msg?.from?.username,
         telegramFirstName: msg?.from?.first_name,
@@ -1394,7 +1395,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         await this.userStore.setThreadConversation(
           telegramUserId,
           threadRoute.chatId,
-          mainConversationId,
+          sessionId,
           threadRoute.threadId,
         );
       }
@@ -1404,10 +1405,10 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         .text("Help", CB_SHOW_HELP);
 
       await ctx.reply(
-        `<b>\u2705 Connected successfully!</b>\n\n` +
+          `<b>\u2705 Connected successfully!</b>\n\n` +
           `Hub: <code>${result.hubId}</code>\n` +
           `Agent: <code>${result.agentId}</code>\n` +
-          `Session: <code>${mainConversationId}</code>\n\n` +
+          `Session: <code>${sessionId}</code>\n\n` +
           `You can now send messages to interact with your agent.`,
         { parse_mode: "HTML", reply_markup: successKeyboard },
       );
@@ -1625,7 +1626,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       from: user.deviceId,
       to: user.hubId,
       action: "message",
-      payload: { agentId: user.agentId, conversationId, content: text },
+      payload: { agentId: user.agentId, conversationId, sessionId: conversationId, content: text },
     };
 
     const sent = this.eventsGateway.routeFromVirtualDevice(message);
@@ -1676,7 +1677,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
           const streamPayload = msg.payload as StreamPayload;
           const event = streamPayload?.event;
           if (!event || !("type" in event)) return;
-          const conversationId = streamPayload?.conversationId;
+          const conversationId = streamPayload?.sessionId ?? streamPayload?.conversationId;
           const contextKey = this.makeConversationContextKey(deviceId, conversationId);
 
           // Start typing when LLM begins generating
@@ -1744,16 +1745,18 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             caption?: string;
             filename?: string;
             conversationId?: string;
+            sessionId?: string;
           };
           if (payload?.data) {
-            const contextKey = this.makeConversationContextKey(deviceId, payload.conversationId);
+            const conversationId = payload.sessionId ?? payload.conversationId;
+            const contextKey = this.makeConversationContextKey(deviceId, conversationId);
             void this.sendFileToTelegram(
               deviceId,
               Buffer.from(payload.data, "base64"),
               payload.type ?? "document",
               payload.caption,
               payload.filename,
-              payload.conversationId,
+              conversationId,
             );
             this.activateMessageContext(contextKey);
           }
@@ -1762,10 +1765,16 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
         // Regular message (e.g., "message" action from Hub)
         if (msg.action === "message") {
-          const payload = msg.payload as { content?: string; agentId?: string; conversationId?: string };
+          const payload = msg.payload as {
+            content?: string;
+            agentId?: string;
+            conversationId?: string;
+            sessionId?: string;
+          };
           if (payload?.content) {
-            const contextKey = this.makeConversationContextKey(deviceId, payload.conversationId);
-            void this.sendToTelegram(deviceId, payload.content, payload.conversationId).then(() => {
+            const conversationId = payload.sessionId ?? payload.conversationId;
+            const contextKey = this.makeConversationContextKey(deviceId, conversationId);
+            void this.sendToTelegram(deviceId, payload.content, conversationId).then(() => {
               void this.clearMessageContext(contextKey);
             });
           }
@@ -1774,12 +1783,18 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
         // Error messages
         if (msg.action === "error") {
-          const payload = msg.payload as { message?: string; code?: string; conversationId?: string };
-          const contextKey = this.makeConversationContextKey(deviceId, payload.conversationId);
+          const payload = msg.payload as {
+            message?: string;
+            code?: string;
+            conversationId?: string;
+            sessionId?: string;
+          };
+          const conversationId = payload.sessionId ?? payload.conversationId;
+          const contextKey = this.makeConversationContextKey(deviceId, conversationId);
           this.stopTyping(contextKey);
           void this.clearMessageContext(contextKey);
           if (payload?.message) {
-            void this.sendToTelegram(deviceId, `Error: ${payload.message}`, payload.conversationId);
+            void this.sendToTelegram(deviceId, `Error: ${payload.message}`, conversationId);
           }
         }
       },

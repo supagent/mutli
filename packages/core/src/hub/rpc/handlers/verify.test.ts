@@ -37,6 +37,7 @@ describe("createVerifyHandler", () => {
       hubId: "hub-1",
       agentId: "agent-1",
       conversationId: "conv-1",
+      sessionId: "conv-1",
       mainConversationId: "conv-1",
       isNewDevice: false,
     });
@@ -70,6 +71,7 @@ describe("createVerifyHandler", () => {
       hubId: "hub-2",
       agentId: "agent-2",
       conversationId: "conv-2",
+      sessionId: "conv-2",
       mainConversationId: "conv-2",
       isNewDevice: true,
     });
@@ -102,4 +104,3 @@ describe("createVerifyHandler", () => {
     expect(storeApi.allowDevice).not.toHaveBeenCalled();
   });
 });
-

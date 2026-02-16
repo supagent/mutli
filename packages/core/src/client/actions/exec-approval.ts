@@ -16,6 +16,8 @@ export interface ExecApprovalRequestPayload {
   agentId: string;
   /** Conversation ID that initiated the approval request. */
   conversationId: string;
+  /** Session ID alias (same value as conversationId). */
+  sessionId?: string;
   /** Shell command requiring approval */
   command: string;
   /** Working directory */

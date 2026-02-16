@@ -38,6 +38,7 @@ export function createVerifyHandler(ctx: VerifyContext): RpcHandler {
         hubId: ctx.hubId,
         agentId: allowed.agentId,
         conversationId,
+        sessionId: conversationId,
         mainConversationId: conversationId,
         isNewDevice: false,
       };
@@ -66,6 +67,7 @@ export function createVerifyHandler(ctx: VerifyContext): RpcHandler {
       hubId: ctx.hubId,
       agentId: result.agentId,
       conversationId: mainConversationId,
+      sessionId: mainConversationId,
       mainConversationId,
       isNewDevice: true,
     };

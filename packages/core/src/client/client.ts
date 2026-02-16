@@ -240,6 +240,7 @@ export class GatewayClient {
         hubId: string;
         agentId: string;
         conversationId?: string;
+        sessionId?: string;
         mainConversationId?: string;
         isNewDevice?: boolean;
       }
@@ -328,21 +329,27 @@ export class GatewayClient {
             platform: navigator.platform,
             language: navigator.language,
           } : undefined;
-          this.request<{
-            hubId: string;
-            agentId: string;
-            conversationId?: string;
-            mainConversationId?: string;
-            isNewDevice?: boolean;
-          }>(
-            this.options.hubId,
-            "verify",
-            { token: this.options.token, meta },
-            this.options.verifyTimeout,
-          )
+            this.request<{
+              hubId: string;
+              agentId: string;
+              conversationId?: string;
+              sessionId?: string;
+              mainConversationId?: string;
+              isNewDevice?: boolean;
+            }>(
+              this.options.hubId,
+              "verify",
+              { token: this.options.token, meta },
+              this.options.verifyTimeout,
+            )
             .then((result) => {
+              const sessionId = result.sessionId ?? result.conversationId ?? result.mainConversationId;
+              const normalizedResult = {
+                ...result,
+                ...(sessionId ? { sessionId, conversationId: sessionId, mainConversationId: sessionId } : {}),
+              };
               // Verify succeeded — now expose "registered" to upper layer
-              this.callbacks.onVerified?.(result);
+              this.callbacks.onVerified?.(normalizedResult);
               this.callbacks.onRegistered?.(response.deviceId);
               this.callbacks.onStateChange?.("registered");
             })

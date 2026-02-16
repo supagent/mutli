@@ -726,7 +726,7 @@
         from: deviceId,
         to: targetDeviceId,
         action: 'message',
-        payload: { agentId: targetAgentId, conversationId: targetAgentId, content: text },
+        payload: { agentId: targetAgentId, conversationId: targetAgentId, sessionId: targetAgentId, content: text },
       });
 
       appendMsg('self', text);

@@ -130,7 +130,12 @@ export function useGatewayConnection(): UseGatewayConnectionReturn {
               gateway: id.gateway,
               hubId: result.hubId,
               agentId: result.agentId,
-              conversationId: id.conversationId ?? result.mainConversationId ?? result.agentId,
+              conversationId:
+                id.conversationId
+                ?? result.sessionId
+                ?? result.conversationId
+                ?? result.mainConversationId
+                ?? result.agentId,
             };
           })
           .onStateChange((state: ConnectionState) => {

@@ -68,6 +68,7 @@ export interface CurrentProviderInfo {
 export interface LocalChatEvent {
   agentId: string
   conversationId?: string
+  sessionId?: string
   streamId?: string
   type?: 'error'
   content?: string
@@ -101,6 +102,7 @@ export interface LocalChatApproval {
   approvalId: string
   agentId: string
   conversationId?: string
+  sessionId?: string
   command: string
   cwd?: string
   riskLevel: 'safe' | 'needs-review' | 'dangerous'

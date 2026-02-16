@@ -60,6 +60,7 @@ export class ExecApprovalManager {
       approvalId,
       agentId: params.agentId,
       conversationId,
+      sessionId: conversationId,
       command: params.command,
       cwd: params.cwd,
       riskLevel: params.riskLevel,
@@ -124,7 +125,11 @@ export class ExecApprovalManager {
    */
   cancelPending(agentId: string): void {
     for (const [id, entry] of this.pending) {
-      if (entry.request.agentId === agentId || entry.request.conversationId === agentId) {
+      if (
+        entry.request.agentId === agentId
+        || entry.request.conversationId === agentId
+        || entry.request.sessionId === agentId
+      ) {
         if (entry.timer) clearTimeout(entry.timer);
         this.pending.delete(id);
         entry.resolve({ approved: false, decision: "deny" });

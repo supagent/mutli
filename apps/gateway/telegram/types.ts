@@ -7,7 +7,7 @@ export interface TelegramUser {
   telegramUserId: string;
   hubId: string;
   agentId: string;
-  /** Current active conversation for this Telegram thread. */
+  /** Default session fallback when no per-thread route is stored. */
   conversationId?: string | undefined;
   deviceId: string;
   createdAt: Date;

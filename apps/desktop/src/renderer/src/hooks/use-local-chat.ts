@@ -119,7 +119,7 @@ export function useLocalChat(options: UseLocalChatOptions = {}) {
     // Listen for inbound messages from all sources (gateway, channel)
     // This allows the local UI to display messages from other sources
     window.electronAPI.hub.onInboundMessage((event: InboundMessageEvent) => {
-      const eventConversationId = event.conversationId ?? event.agentId
+      const eventConversationId = event.conversationId
       // Only add non-local messages (local messages are added by sendMessage)
       if (event.source.type !== 'local' && eventConversationId === activeConversationId) {
         chatRef.current.addUserMessage(

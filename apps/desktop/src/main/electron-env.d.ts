@@ -101,6 +101,7 @@ interface ProfileData {
 interface LocalChatEvent {
   agentId: string
   conversationId?: string
+  sessionId?: string
   streamId?: string
   type?: 'error'
   content?: string
@@ -119,6 +120,7 @@ interface LocalChatApproval {
   approvalId: string
   agentId: string
   conversationId?: string
+  sessionId?: string
   command: string
   cwd?: string
   riskLevel: 'safe' | 'needs-review' | 'dangerous'

@@ -5,25 +5,25 @@ import { MessageContextQueue } from "./message-context-queue.js";
 describe("MessageContextQueue", () => {
   it("keeps the first context active while newer messages stay pending", () => {
     const queue = new MessageContextQueue();
-    const deviceId = "device-1";
+    const contextKey = "device-1:session-1";
 
-    queue.enqueue(deviceId, { telegramChatId: 100, telegramMessageId: 1 });
-    queue.enqueue(deviceId, { telegramChatId: 100, telegramMessageId: 2 });
+    queue.enqueue(contextKey, { telegramChatId: 100, telegramMessageId: 1 });
+    queue.enqueue(contextKey, { telegramChatId: 100, telegramMessageId: 2 });
 
-    assert.deepEqual(queue.activate(deviceId), {
+    assert.deepEqual(queue.activate(contextKey), {
       telegramChatId: 100,
       telegramMessageId: 1,
     });
-    assert.deepEqual(queue.peekForSend(deviceId), {
+    assert.deepEqual(queue.peekForSend(contextKey), {
       telegramChatId: 100,
       telegramMessageId: 1,
     });
 
-    assert.deepEqual(queue.release(deviceId), {
+    assert.deepEqual(queue.release(contextKey), {
       telegramChatId: 100,
       telegramMessageId: 1,
     });
-    assert.deepEqual(queue.peekForSend(deviceId), {
+    assert.deepEqual(queue.peekForSend(contextKey), {
       telegramChatId: 100,
       telegramMessageId: 2,
     });
@@ -31,17 +31,17 @@ describe("MessageContextQueue", () => {
 
   it("releases oldest pending context when a run errors before message_start", () => {
     const queue = new MessageContextQueue();
-    const deviceId = "device-2";
+    const contextKey = "device-2:session-2";
 
-    queue.enqueue(deviceId, { telegramChatId: 200, telegramMessageId: 11 });
-    queue.enqueue(deviceId, { telegramChatId: 200, telegramMessageId: 12 });
+    queue.enqueue(contextKey, { telegramChatId: 200, telegramMessageId: 11 });
+    queue.enqueue(contextKey, { telegramChatId: 200, telegramMessageId: 12 });
 
     // No activate(): simulate agent_error before streaming starts
-    assert.deepEqual(queue.release(deviceId), {
+    assert.deepEqual(queue.release(contextKey), {
       telegramChatId: 200,
       telegramMessageId: 11,
     });
-    assert.deepEqual(queue.peekForSend(deviceId), {
+    assert.deepEqual(queue.peekForSend(contextKey), {
       telegramChatId: 200,
       telegramMessageId: 12,
     });
@@ -49,28 +49,28 @@ describe("MessageContextQueue", () => {
 
   it("does not advance queue on repeated activate calls during one run", () => {
     const queue = new MessageContextQueue();
-    const deviceId = "device-3";
+    const contextKey = "device-3:session-3";
 
-    queue.enqueue(deviceId, { telegramChatId: 300, telegramMessageId: 21 });
-    queue.enqueue(deviceId, { telegramChatId: 300, telegramMessageId: 22 });
+    queue.enqueue(contextKey, { telegramChatId: 300, telegramMessageId: 21 });
+    queue.enqueue(contextKey, { telegramChatId: 300, telegramMessageId: 22 });
 
-    assert.equal(queue.activate(deviceId)?.telegramMessageId, 21);
-    assert.equal(queue.activate(deviceId)?.telegramMessageId, 21);
+    assert.equal(queue.activate(contextKey)?.telegramMessageId, 21);
+    assert.equal(queue.activate(contextKey)?.telegramMessageId, 21);
 
-    assert.equal(queue.release(deviceId)?.telegramMessageId, 21);
-    assert.equal(queue.peekForSend(deviceId)?.telegramMessageId, 22);
+    assert.equal(queue.release(contextKey)?.telegramMessageId, 21);
+    assert.equal(queue.peekForSend(contextKey)?.telegramMessageId, 22);
   });
 
-  it("isolates contexts by device", () => {
+  it("isolates contexts by context key", () => {
     const queue = new MessageContextQueue();
 
-    queue.enqueue("a", { telegramChatId: 1, telegramMessageId: 1 });
-    queue.enqueue("b", { telegramChatId: 2, telegramMessageId: 2 });
+    queue.enqueue("a:session-1", { telegramChatId: 1, telegramMessageId: 1 });
+    queue.enqueue("a:session-2", { telegramChatId: 2, telegramMessageId: 2 });
 
-    assert.equal(queue.activate("a")?.telegramMessageId, 1);
-    assert.equal(queue.peekForSend("b")?.telegramMessageId, 2);
-    assert.equal(queue.release("a")?.telegramMessageId, 1);
-    assert.equal(queue.peekForSend("a"), undefined);
-    assert.equal(queue.peekForSend("b")?.telegramMessageId, 2);
+    assert.equal(queue.activate("a:session-1")?.telegramMessageId, 1);
+    assert.equal(queue.peekForSend("a:session-2")?.telegramMessageId, 2);
+    assert.equal(queue.release("a:session-1")?.telegramMessageId, 1);
+    assert.equal(queue.peekForSend("a:session-1"), undefined);
+    assert.equal(queue.peekForSend("a:session-2")?.telegramMessageId, 2);
   });
 });
