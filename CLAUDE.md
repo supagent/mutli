@@ -54,6 +54,9 @@ docker compose down   # Stop PostgreSQL
 - Go code follows standard Go conventions (gofmt, go vet).
 - Keep comments in code **English only**.
 - Prefer existing patterns/components over introducing parallel abstractions.
+- Unless the user explicitly asks for backwards compatibility, do **not** add compatibility layers, fallback paths, dual-write logic, legacy adapters, or temporary shims.
+- If a flow or API is being replaced and the product is not yet live, prefer removing the old path instead of preserving both old and new behavior.
+- Treat compatibility code as a maintenance cost, not a default safety mechanism. Avoid "just in case" branches that make the codebase harder to reason about.
 - Avoid broad refactors unless required by the task.
 
 ## 5. UI/UX Rules
