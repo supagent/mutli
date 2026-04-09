@@ -9,8 +9,10 @@ import { useDashboardGuard } from "./use-dashboard-guard";
 
 interface DashboardLayoutProps {
   children: ReactNode;
-  /** Sibling of SidebarInset (e.g. SearchCommand) */
+  /** Sibling of SidebarInset (e.g. SearchCommand, ChatWindow) */
   extra?: ReactNode;
+  /** Rendered inside sidebar header as a search trigger */
+  searchSlot?: ReactNode;
   /** Loading indicator */
   loadingIndicator?: ReactNode;
 }
@@ -18,6 +20,7 @@ interface DashboardLayoutProps {
 export function DashboardLayout({
   children,
   extra,
+  searchSlot,
   loadingIndicator,
 }: DashboardLayoutProps) {
   const { user, isLoading, workspace } = useDashboardGuard("/");
@@ -32,22 +35,24 @@ export function DashboardLayout({
 
   if (!user) return null;
 
+  if (!workspace) {
+    return (
+      <div className="flex h-svh items-center justify-center">
+        {loadingIndicator}
+      </div>
+    );
+  }
+
   return (
-    <SidebarProvider className="h-svh">
-      <AppSidebar />
-      <SidebarInset className="overflow-hidden">
-        {workspace ? (
-          <WorkspaceIdProvider wsId={workspace.id}>
-            {children}
-            <ModalRegistry />
-          </WorkspaceIdProvider>
-        ) : (
-          <div className="flex flex-1 items-center justify-center">
-            {loadingIndicator}
-          </div>
-        )}
-      </SidebarInset>
-      {extra}
-    </SidebarProvider>
+    <WorkspaceIdProvider wsId={workspace.id}>
+      <SidebarProvider className="h-svh">
+        <AppSidebar searchSlot={searchSlot} />
+        <SidebarInset className="overflow-hidden">
+          {children}
+          <ModalRegistry />
+        </SidebarInset>
+        {extra}
+      </SidebarProvider>
+    </WorkspaceIdProvider>
   );
 }

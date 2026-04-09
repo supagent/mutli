@@ -16,14 +16,18 @@ import {
   BookOpenText,
   SquarePen,
   CircleUser,
+  FolderKanban,
+  Ellipsis,
 } from "lucide-react";
 import { WorkspaceAvatar } from "../workspace/workspace-avatar";
+import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { useIssueDraftStore } from "@multica/core/issues/stores/draft-store";
 import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarFooter,
   SidebarMenu,
@@ -47,15 +51,20 @@ import { useQuery } from "@tanstack/react-query";
 import { inboxKeys, deduplicateInboxItems } from "@multica/core/inbox/queries";
 import { api } from "@multica/core/api";
 import { useModalStore } from "@multica/core/modals";
+import { useMyRuntimesNeedUpdate } from "@multica/core/runtimes/hooks";
 
-const primaryNav = [
+const personalNav = [
   { href: "/inbox", label: "Inbox", icon: Inbox },
   { href: "/my-issues", label: "My Issues", icon: CircleUser },
-  { href: "/issues", label: "Issues", icon: ListTodo },
 ];
 
 const workspaceNav = [
+  { href: "/issues", label: "Issues", icon: ListTodo },
+  { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/agents", label: "Agents", icon: Bot },
+];
+
+const configureNav = [
   { href: "/runtimes", label: "Runtimes", icon: Monitor },
   { href: "/skills", label: "Skills", icon: BookOpenText },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -70,13 +79,15 @@ function DraftDot() {
 interface AppSidebarProps {
   /** Rendered above SidebarHeader (e.g. desktop traffic light spacer) */
   topSlot?: React.ReactNode;
+  /** Rendered in the header between workspace switcher and new-issue button (e.g. search trigger) */
+  searchSlot?: React.ReactNode;
   /** Extra className for SidebarHeader */
   headerClassName?: string;
   /** Extra style for SidebarHeader */
   headerStyle?: React.CSSProperties;
 }
 
-export function AppSidebar({ topSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
+export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
   const { pathname, push } = useNavigation();
   const user = useAuthStore((s) => s.user);
   const authLogout = useAuthStore((s) => s.logout);
@@ -94,6 +105,7 @@ export function AppSidebar({ topSlot, headerClassName, headerStyle }: AppSidebar
     () => deduplicateInboxItems(inboxItems).filter((i) => !i.read).length,
     [inboxItems],
   );
+  const hasRuntimeUpdates = useMyRuntimesNeedUpdate();
 
   const logout = () => {
     push("/");
@@ -106,21 +118,20 @@ export function AppSidebar({ topSlot, headerClassName, headerStyle }: AppSidebar
         {topSlot}
         {/* Workspace Switcher */}
         <SidebarHeader className={cn("py-3", headerClassName)} style={headerStyle}>
-          <div className="flex items-center gap-4">
-            <SidebarMenu className="min-w-0 flex-1">
-              <SidebarMenuItem>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <SidebarMenuButton>
-                        <WorkspaceAvatar name={workspace?.name ?? "M"} size="sm" />
-                        <span className="flex-1 truncate font-medium">
-                          {workspace?.name ?? "Multica"}
-                        </span>
-                        <ChevronDown className="size-3 text-muted-foreground" />
-                      </SidebarMenuButton>
-                    }
-                  />
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <SidebarMenuButton>
+                      <WorkspaceAvatar name={workspace?.name ?? "M"} size="sm" />
+                      <span className="flex-1 truncate font-medium">
+                        {workspace?.name ?? "Multica"}
+                      </span>
+                      <ChevronDown className="size-3 text-muted-foreground" />
+                    </SidebarMenuButton>
+                  }
+                />
                 <DropdownMenuContent
                   className="w-auto"
                   align="start"
@@ -174,20 +185,28 @@ export function AppSidebar({ topSlot, headerClassName, headerStyle }: AppSidebar
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                 </DropdownMenuContent>
-                </DropdownMenu>
+              </DropdownMenu>
+            </SidebarMenuItem>
+          </SidebarMenu>
+          <SidebarMenu>
+            {searchSlot && (
+              <SidebarMenuItem>
+                {searchSlot}
               </SidebarMenuItem>
-            </SidebarMenu>
-            <Tooltip>
-              <TooltipTrigger
-                className="relative flex h-7 w-7 items-center justify-center rounded-lg bg-background text-foreground shadow-sm hover:bg-accent"
+            )}
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                className="text-muted-foreground"
                 onClick={() => useModalStore.getState().open("create-issue")}
               >
-                <SquarePen className="size-3.5" />
-                <DraftDot />
-              </TooltipTrigger>
-              <TooltipContent side="bottom">New issue</TooltipContent>
-            </Tooltip>
-          </div>
+                <span className="relative">
+                  <SquarePen />
+                  <DraftDot />
+                </span>
+                <span>New Issue</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
         </SidebarHeader>
 
         {/* Navigation */}
@@ -195,7 +214,7 @@ export function AppSidebar({ topSlot, headerClassName, headerStyle }: AppSidebar
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
-                {primaryNav.map((item) => {
+                {personalNav.map((item) => {
                   const isActive = pathname === item.href;
                   return (
                     <SidebarMenuItem key={item.href}>
@@ -220,6 +239,7 @@ export function AppSidebar({ topSlot, headerClassName, headerStyle }: AppSidebar
           </SidebarGroup>
 
           <SidebarGroup>
+            <SidebarGroupLabel>Workspace</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
                 {workspaceNav.map((item) => {
@@ -240,8 +260,65 @@ export function AppSidebar({ topSlot, headerClassName, headerStyle }: AppSidebar
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
+
+          <SidebarGroup>
+            <SidebarGroupLabel>Configure</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-0.5">
+                {configureNav.map((item) => {
+                  const isActive = pathname === item.href;
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton
+                        isActive={isActive}
+                        render={<AppLink href={item.href} />}
+                        className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
+                      >
+                        <item.icon />
+                        <span>{item.label}</span>
+                        {item.label === "Runtimes" && hasRuntimeUpdates && (
+                          <span className="ml-auto size-1.5 rounded-full bg-destructive" />
+                        )}
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
         </SidebarContent>
-        <SidebarFooter />
+
+        <SidebarFooter className="p-2">
+          <div className="border-t pt-2">
+            <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5">
+              <ActorAvatar
+                name={user?.name ?? ""}
+                initials={(user?.name ?? "U").charAt(0).toUpperCase()}
+                avatarUrl={user?.avatar_url}
+                size={28}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium leading-tight">
+                  {user?.name}
+                </p>
+                <p className="truncate text-xs text-muted-foreground leading-tight">
+                  {user?.email}
+                </p>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
+                  <Ellipsis className="size-4" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" side="top" sideOffset={4}>
+                  <DropdownMenuItem variant="destructive" onClick={logout}>
+                    <LogOut className="h-3.5 w-3.5" />
+                    Log out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+        </SidebarFooter>
         <SidebarRail />
       </Sidebar>
   );

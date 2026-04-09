@@ -35,6 +35,7 @@
     "./runtimes": "./runtimes/index.ts",
     "./runtimes/queries": "./runtimes/queries.ts",
     "./runtimes/mutations": "./runtimes/mutations.ts",
+    "./runtimes/hooks": "./runtimes/hooks.ts",
     "./realtime": "./realtime/index.ts",
     "./navigation": "./navigation/index.ts",
     "./modals": "./modals/index.ts",
