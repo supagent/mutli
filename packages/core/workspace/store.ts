@@ -8,7 +8,6 @@ const logger = createLogger("workspace-store");
 
 interface WorkspaceStoreOptions {
   storage?: StorageAdapter;
-  onError?: (message: string) => void;
 }
 
 interface WorkspaceState {

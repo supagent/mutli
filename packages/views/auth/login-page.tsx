@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardHeader,
@@ -19,6 +20,7 @@ import {
 } from "@multica/ui/components/ui/input-otp";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceStore } from "@multica/core/workspace";
+import { workspaceKeys } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
 import type { User } from "@multica/core/types";
 
@@ -87,6 +89,7 @@ export function LoginPage({
   lastWorkspaceId,
   onTokenObtained,
 }: LoginPageProps) {
+  const qc = useQueryClient();
   const [step, setStep] = useState<"email" | "code" | "cli_confirm">("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -167,6 +170,7 @@ export function LoginPage({
         // Normal path
         await useAuthStore.getState().verifyCode(email, value);
         const wsList = await api.listWorkspaces();
+        qc.setQueryData(workspaceKeys.list(), wsList);
         useWorkspaceStore.getState().hydrateWorkspace(wsList, lastWorkspaceId);
         onTokenObtained?.();
         onSuccess();
@@ -178,7 +182,7 @@ export function LoginPage({
         setLoading(false);
       }
     },
-    [email, onSuccess, cliCallback, lastWorkspaceId, onTokenObtained],
+    [email, onSuccess, cliCallback, lastWorkspaceId, onTokenObtained, qc],
   );
 
   const handleResend = async () => {

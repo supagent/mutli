@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { Workspace } from "../types";
 import { api } from "../api";
 import { workspaceKeys, workspaceListOptions } from "./queries";
 import { useWorkspaceStore } from "./index";
@@ -9,7 +10,8 @@ export function useCreateWorkspace() {
     mutationFn: (data: { name: string; slug: string; description?: string }) =>
       api.createWorkspace(data),
     onSuccess: (newWs) => {
-      // Switch to the newly created workspace immediately
+      // Add to cache before switching so sidebar list is consistent on first render
+      qc.setQueryData(workspaceKeys.list(), (old: Workspace[] = []) => [...old, newWs]);
       useWorkspaceStore.getState().switchWorkspace(newWs);
     },
     onSettled: () => {
@@ -25,8 +27,8 @@ export function useLeaveWorkspace() {
     onSuccess: async (_, workspaceId) => {
       const currentWsId = useWorkspaceStore.getState().workspace?.id;
       if (currentWsId === workspaceId) {
-        // Left our current workspace — refetch and pick another
-        const wsList = await qc.fetchQuery(workspaceListOptions());
+        // staleTime: 0 forces a real network fetch — cache still has the left workspace
+        const wsList = await qc.fetchQuery({ ...workspaceListOptions(), staleTime: 0 });
         useWorkspaceStore.getState().hydrateWorkspace(wsList);
       }
     },
@@ -43,8 +45,8 @@ export function useDeleteWorkspace() {
     onSuccess: async (_, workspaceId) => {
       const currentWsId = useWorkspaceStore.getState().workspace?.id;
       if (currentWsId === workspaceId) {
-        // Deleted our current workspace — refetch and pick another
-        const wsList = await qc.fetchQuery(workspaceListOptions());
+        // staleTime: 0 forces a real network fetch — cache still has the deleted workspace
+        const wsList = await qc.fetchQuery({ ...workspaceListOptions(), staleTime: 0 });
         useWorkspaceStore.getState().hydrateWorkspace(wsList);
       }
     },

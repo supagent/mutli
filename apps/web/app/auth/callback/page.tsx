@@ -2,8 +2,10 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceStore } from "@multica/core/workspace";
+import { workspaceKeys } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
 import {
   Card,
@@ -17,6 +19,7 @@ import { Loader2 } from "lucide-react";
 function CallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const qc = useQueryClient();
   const loginWithGoogle = useAuthStore((s) => s.loginWithGoogle);
   const hydrateWorkspace = useWorkspaceStore((s) => s.hydrateWorkspace);
   const [error, setError] = useState("");
@@ -39,6 +42,7 @@ function CallbackContent() {
     loginWithGoogle(code, redirectUri)
       .then(async () => {
         const wsList = await api.listWorkspaces();
+        qc.setQueryData(workspaceKeys.list(), wsList);
         const lastWsId = localStorage.getItem("multica_workspace_id");
         await hydrateWorkspace(wsList, lastWsId);
         router.push("/issues");
@@ -46,7 +50,7 @@ function CallbackContent() {
       .catch((err) => {
         setError(err instanceof Error ? err.message : "Login failed");
       });
-  }, [searchParams, loginWithGoogle, hydrateWorkspace, router]);
+  }, [searchParams, loginWithGoogle, hydrateWorkspace, router, qc]);
 
   if (error) {
     return (
