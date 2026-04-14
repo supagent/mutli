@@ -6,7 +6,7 @@ This document is designed for AI agents to execute. Follow these steps exactly t
 
 - Docker and Docker Compose installed
 - Homebrew installed (for CLI)
-- At least one AI agent CLI on PATH: `claude` or `codex`
+- At least one AI agent CLI on PATH: `claude`, `codex`, or `oh` (OpenHarness — free with ModelRelay)
 
 ## Install
 

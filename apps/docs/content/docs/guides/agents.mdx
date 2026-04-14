@@ -15,7 +15,7 @@ When an agent is assigned a task in Multica:
 
 1. The daemon detects the task assignment
 2. It creates an isolated workspace directory
-3. It spawns the appropriate agent CLI (Claude Code, Codex, OpenClaw, or OpenCode)
+3. It spawns the appropriate agent CLI (Claude Code, Codex, OpenClaw, OpenCode, Hermes, or OpenHarness)
 4. The agent executes autonomously, streaming progress back to Multica
 5. Results are reported — success, failure, or blockers
 
@@ -25,14 +25,25 @@ Real-time progress is streamed via WebSocket so you can follow along in the Mult
 
 ## Supported Agent Providers
 
+**Coding Agents**
+
 | Provider | CLI Command | Description |
 |----------|-------------|-------------|
 | Claude Code | `claude` | Anthropic's coding agent |
 | Codex | `codex` | OpenAI's coding agent |
 | OpenClaw | `openclaw` | Open-source coding agent |
 | OpenCode | `opencode` | Open-source coding agent |
+| Hermes | `hermes` | Nous Research coding agent |
+
+**Research / Knowledge Agents**
+
+| Provider | CLI Command | Description |
+|----------|-------------|-------------|
+| OpenHarness | `oh` | Research agent — web search, page reading, report writing |
 
 The daemon auto-detects which CLIs are available on your PATH and registers them as available runtimes.
+
+> **Free quick start:** Install OpenHarness (`pip install openharness-ai`) and ModelRelay (`npx -y modelrelay`) for a capable research agent at $0/task. See the [CLI and Daemon Guide](/docs/guides/cli-daemon) for details.
 
 ## Reusable Skills
 
