@@ -88,7 +88,7 @@ type Config struct {
 }
 
 // New creates a Backend for the given agent type.
-// Supported types: "claude", "codex", "opencode", "openclaw", "hermes".
+// Supported types: "claude", "codex", "opencode", "openclaw", "hermes", "oh".
 func New(agentType string, cfg Config) (Backend, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -105,8 +105,10 @@ func New(agentType string, cfg Config) (Backend, error) {
 		return &openclawBackend{cfg: cfg}, nil
 	case "hermes":
 		return &hermesBackend{cfg: cfg}, nil
+	case "oh":
+		return &ohBackend{cfg: cfg}, nil
 	default:
-		return nil, fmt.Errorf("unknown agent type: %q (supported: claude, codex, opencode, openclaw, hermes)", agentType)
+		return nil, fmt.Errorf("unknown agent type: %q (supported: claude, codex, opencode, openclaw, hermes, oh)", agentType)
 	}
 }
 

@@ -113,8 +113,15 @@ func LoadConfig(overrides Overrides) (Config, error) {
 			Model: strings.TrimSpace(os.Getenv("MULTICA_HERMES_MODEL")),
 		}
 	}
+	ohPath := envOrDefault("MULTICA_OH_PATH", "oh")
+	if _, err := exec.LookPath(ohPath); err == nil {
+		agents["oh"] = AgentEntry{
+			Path:  ohPath,
+			Model: envOrDefault("MULTICA_OH_MODEL", "auto-fastest"),
+		}
+	}
 	if len(agents) == 0 {
-		return Config{}, fmt.Errorf("no agent CLI found: install claude, codex, opencode, openclaw, or hermes and ensure it is on PATH")
+		return Config{}, fmt.Errorf("no agent CLI found: install claude, codex, opencode, openclaw, hermes, or oh and ensure it is on PATH")
 	}
 
 	// Host info
