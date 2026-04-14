@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -272,6 +273,15 @@ func TestDaytonaFSDownload(t *testing.T) {
 	t.Log("SUCCESS: FileSystem ListFiles + DownloadFile round-trip verified")
 }
 
+func hasExactLine(out, want string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDaytonaPtyStreamingIncremental(t *testing.T) {
 	apiKey := os.Getenv("DAYTONA_API_KEY")
 	if apiKey == "" {
@@ -315,6 +325,11 @@ func TestDaytonaPtyStreamingIncremental(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePty: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := handle.Disconnect(); err != nil {
+			t.Logf("Disconnect PTY: %v", err)
+		}
+	})
 	if err := handle.WaitForConnection(ctx); err != nil {
 		t.Fatalf("WaitForConnection: %v", err)
 	}
@@ -351,8 +366,6 @@ func TestDaytonaPtyStreamingIncremental(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("Timed out waiting for PTY output")
 	}
-
-	handle.Disconnect()
 	totalDuration := time.Since(sendStart)
 
 	// Log all chunks with timing
@@ -434,6 +447,11 @@ func TestDaytonaStopDuringActiveProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePty: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := handle.Disconnect(); err != nil {
+			t.Logf("Disconnect PTY: %v", err)
+		}
+	})
 	if err := handle.WaitForConnection(ctx); err != nil {
 		t.Fatalf("WaitForConnection: %v", err)
 	}
@@ -444,13 +462,16 @@ func TestDaytonaStopDuringActiveProcess(t *testing.T) {
 		data string
 		at   time.Time
 	}
+	var chunksMu sync.Mutex
 	chunks := make([]chunk, 0, 10)
 	dataChanClosed := make(chan struct{})
 
 	go func() {
 		defer close(dataChanClosed)
 		for data := range handle.DataChan() {
+			chunksMu.Lock()
 			chunks = append(chunks, chunk{data: string(data), at: time.Now()})
+			chunksMu.Unlock()
 		}
 	}()
 
@@ -472,11 +493,13 @@ waitLoop:
 			t.Log("Timeout waiting for ticks, proceeding with Stop()")
 			break waitLoop
 		case <-time.After(200 * time.Millisecond):
+			chunksMu.Lock()
 			combined := ""
 			for _, c := range chunks {
 				combined += c.data
 			}
-			if strings.Contains(combined, "tick 2") {
+			chunksMu.Unlock()
+			if hasExactLine(combined, "tick 2") {
 				t.Log("Observed tick 2, proceeding with Stop()")
 				break waitLoop
 			}
@@ -505,15 +528,17 @@ waitLoop:
 	}
 
 	// 8. Assert: at least 2 ticks were received before stop
+	chunksMu.Lock()
 	combined := ""
 	for _, c := range chunks {
 		combined += c.data
 	}
+	chunksMu.Unlock()
 	t.Logf("Combined PTY output (%d chunks): %q", len(chunks), combined)
 
 	tickCount := 0
 	for i := 1; i <= 60; i++ {
-		if strings.Contains(combined, fmt.Sprintf("tick %d", i)) {
+		if hasExactLine(combined, fmt.Sprintf("tick %d", i)) {
 			tickCount++
 		}
 	}
