@@ -33,7 +33,13 @@ type Config struct {
 	RuntimeName        string
 	CLIVersion         string                // multica CLI version (e.g. "0.1.13")
 	Profile            string                // profile name (empty = default)
-	Agents             map[string]AgentEntry // "claude" -> entry, "codex" -> entry, "opencode" -> entry, "openclaw" -> entry, "hermes" -> entry
+	Agents             map[string]AgentEntry // "claude" -> entry, "codex" -> entry, ..., "embedded" -> entry
+	DaytonaAPIKey      string                // Daytona API key for embedded sandbox runtime
+	DaytonaAPIURL      string                // Optional: custom Daytona API URL
+	EmbeddedModel      string                // Default model for embedded agent
+	EmbeddedMaxTurns   int                   // Default max turns for embedded agent
+	LLMBaseURL         string                // LLM endpoint for embedded agent
+	LLMAPIKey          string                // LLM API key for embedded agent
 	WorkspacesRoot     string                // base path for execution envs (default: ~/multica_workspaces)
 	KeepEnvAfterTask   bool                  // preserve env after task for debugging
 	HealthPort         int                   // local HTTP port for health checks (default: 19514)
@@ -120,8 +126,15 @@ func LoadConfig(overrides Overrides) (Config, error) {
 			Model: envOrDefault("MULTICA_OH_MODEL", "auto-fastest"),
 		}
 	}
+	daytonaKey := strings.TrimSpace(os.Getenv("DAYTONA_API_KEY"))
+	if daytonaKey != "" {
+		agents["embedded"] = AgentEntry{
+			Path:  "", // no local binary — runs in Daytona sandbox
+			Model: envOrDefault("MULTICA_EMBEDDED_MODEL", "auto-fastest"),
+		}
+	}
 	if len(agents) == 0 {
-		return Config{}, fmt.Errorf("no agent CLI found: install claude, codex, opencode, openclaw, hermes, or oh and ensure it is on PATH")
+		return Config{}, fmt.Errorf("no agent CLI found: install claude, codex, opencode, openclaw, hermes, or oh, or configure DAYTONA_API_KEY for embedded runtime")
 	}
 
 	// Host info
@@ -242,6 +255,12 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		RuntimeName:        runtimeName,
 		Profile:            profile,
 		Agents:             agents,
+		DaytonaAPIKey:      daytonaKey,
+		DaytonaAPIURL:      strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
+		EmbeddedModel:      envOrDefault("MULTICA_EMBEDDED_MODEL", "auto-fastest"),
+		EmbeddedMaxTurns:   func() int { n, _ := intFromEnv("MULTICA_EMBEDDED_MAX_TURNS", 25); return n }(),
+		LLMBaseURL:         envOrDefault("MULTICA_OH_BASE_URL", "http://localhost:7352/v1"),
+		LLMAPIKey:          envOrDefault("MULTICA_OH_API_KEY", "dummy"),
 		WorkspacesRoot:     workspacesRoot,
 		KeepEnvAfterTask:   keepEnv,
 		GCEnabled:          gcEnabled,
