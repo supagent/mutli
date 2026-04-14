@@ -180,24 +180,27 @@ func TestOpenHarnessEndToEnd(t *testing.T) {
 	}
 
 	hasText := false
+	var errorMessages []string
+	hasStatus := false
 	for _, m := range messages {
 		if m.Type == agent.MessageText {
 			hasText = true
-			break
+		}
+		if m.Type == agent.MessageError {
+			errorMessages = append(errorMessages, truncate(m.Content, 120))
+		}
+		if m.Type == agent.MessageStatus {
+			hasStatus = true
 		}
 	}
 	if !hasText {
 		t.Error("expected at least one MessageText, got none")
 	}
+	if len(errorMessages) > 0 {
+		t.Fatalf("received %d MessageError events: %s", len(errorMessages), strings.Join(errorMessages, "; "))
+	}
 
 	// MessageStatus is a bonus — log warning if missing but don't fail
-	hasStatus := false
-	for _, m := range messages {
-		if m.Type == agent.MessageStatus {
-			hasStatus = true
-			break
-		}
-	}
 	if !hasStatus {
 		t.Log("NOTE: no MessageStatus received (expected for trivial prompts)")
 	}
