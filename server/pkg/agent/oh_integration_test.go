@@ -6,7 +6,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -22,17 +24,24 @@ func ohTestBackend(t *testing.T) *ohBackend {
 		baseURL = "http://localhost:7352/v1"
 	}
 
-	// Quick connectivity check
+	// Verify oh is installed
+	if _, err := exec.LookPath("oh"); err != nil {
+		t.Skip("oh not on PATH; skipping integration test")
+	}
+
+	// Verify ModelRelay is reachable
 	if os.Getenv("OH_INTEGRATION_SKIP_CHECK") == "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		b := &ohBackend{cfg: Config{
-			Env:    map[string]string{"MULTICA_OH_BASE_URL": baseURL},
-			Logger: slog.Default(),
-		}}
-		args := buildOHArgs("ping", ExecOptions{MaxTurns: 1}, b.cfg.Env)
-		_ = args // just verifying construction doesn't panic
-		_ = ctx
+		req, _ := http.NewRequestWithContext(ctx, "GET", baseURL+"/models", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Skipf("ModelRelay not reachable at %s: %v", baseURL, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			t.Skipf("ModelRelay returned %d at %s", resp.StatusCode, baseURL)
+		}
 	}
 
 	return &ohBackend{cfg: Config{
@@ -145,19 +154,27 @@ func TestOHBackend_DeniedToolEnforcement(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	bashExecuted := false
+	bashAttempted := false
+	bashDenied := false
 	for msg := range session.Messages {
 		t.Logf("msg: type=%s tool=%q content=%q", msg.Type, msg.Tool, truncateStr(msg.Content, 80))
-		if msg.Type == MessageToolResult && msg.Tool == "bash" && !strings.Contains(msg.Output, "denied") {
-			bashExecuted = true
+		if msg.Tool == "bash" {
+			bashAttempted = true
+			combined := strings.ToLower(msg.Content + " " + msg.Output)
+			if strings.Contains(combined, "denied") || strings.Contains(combined, "not allowed") {
+				bashDenied = true
+			}
 		}
 	}
 
 	result := <-session.Result
 	t.Logf("result: status=%s", result.Status)
 
-	if bashExecuted {
-		t.Error("bash tool executed successfully despite being in denied_tools — safety violation")
+	if !bashAttempted {
+		t.Fatal("expected the prompt to trigger a bash attempt so denied_tools is exercised")
+	}
+	if !bashDenied && !strings.Contains(strings.ToLower(result.Error), "denied") {
+		t.Error("bash was attempted but not explicitly denied — safety enforcement may be broken")
 	}
 }
 

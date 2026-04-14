@@ -20,6 +20,10 @@ type ohBackend struct {
 }
 
 func (b *ohBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if opts.ResumeSessionID != "" {
+		return nil, fmt.Errorf("oh backend does not support session resume")
+	}
+
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
 		execPath = "oh"
@@ -61,7 +65,6 @@ func (b *ohBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 
 	go func() {
 		defer cancel()
-		defer close(msgCh)
 		defer close(resCh)
 
 		startTime := time.Now()
@@ -89,10 +92,20 @@ func (b *ohBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 			trySend(msgCh, msg)
 		}
 
+		scanErr := scanner.Err()
+		if scanErr != nil {
+			_ = cmd.Process.Kill()
+		}
+
 		exitErr := cmd.Wait()
 		duration := time.Since(startTime)
 
-		if runCtx.Err() == context.DeadlineExceeded {
+		if scanErr != nil {
+			finalStatus = "failed"
+			if finalError == "" {
+				finalError = fmt.Sprintf("oh stdout read failed: %v", scanErr)
+			}
+		} else if runCtx.Err() == context.DeadlineExceeded {
 			finalStatus = "timeout"
 			finalError = fmt.Sprintf("oh timed out after %s", timeout)
 		} else if runCtx.Err() == context.Canceled {
@@ -107,6 +120,7 @@ func (b *ohBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 
 		b.cfg.Logger.Info("oh finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
 
+		close(msgCh)
 		resCh <- Result{
 			Status:     finalStatus,
 			Output:     output.String(),

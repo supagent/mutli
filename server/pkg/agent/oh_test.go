@@ -6,6 +6,10 @@ import (
 )
 
 func TestBuildOHArgs_Defaults(t *testing.T) {
+	t.Setenv("MULTICA_OH_BASE_URL", "")
+	t.Setenv("MULTICA_OH_API_KEY", "")
+	t.Setenv("MULTICA_OH_MODEL", "")
+
 	args := buildOHArgs("hello", ExecOptions{}, nil)
 
 	assertContains(t, args, "-p", "hello")
@@ -96,6 +100,8 @@ func TestBuildOHEnv_ConfigDir(t *testing.T) {
 }
 
 func TestResolveOHModel_Priority(t *testing.T) {
+	t.Setenv("MULTICA_OH_MODEL", "")
+
 	// opts.Model takes priority
 	if m := resolveOHModel(ExecOptions{Model: "a"}, map[string]string{"MULTICA_OH_MODEL": "b"}); m != "a" {
 		t.Errorf("expected opts.Model to win, got %q", m)
