@@ -47,7 +47,9 @@ func mapOHEvent(ev ohEvent) (agent.Message, bool) {
 	case "tool_started":
 		var input map[string]any
 		if len(ev.ToolInput) > 0 {
-			_ = json.Unmarshal(ev.ToolInput, &input)
+			if err := json.Unmarshal(ev.ToolInput, &input); err != nil {
+				return agent.Message{}, false
+			}
 		}
 		return agent.Message{Type: agent.MessageToolUse, Tool: ev.ToolName, Input: input}, true
 	case "tool_completed":

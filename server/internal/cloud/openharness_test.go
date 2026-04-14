@@ -37,7 +37,7 @@ func TestOpenHarnessEndToEnd(t *testing.T) {
 
 	// 2. Build image with OpenHarness pre-installed
 	image := daytona.DebianSlim(nil).
-		PipInstall([]string{"openharness-ai"}).
+		PipInstall([]string{"openharness-ai==0.1.6"}).
 		Env("TERM", "dumb")
 
 	// Stream build logs for debugging
@@ -87,7 +87,9 @@ func TestOpenHarnessEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePty: %v", err)
 	}
-	handle.WaitForConnection(ctx)
+	if err := handle.WaitForConnection(ctx); err != nil {
+		t.Fatalf("WaitForConnection: %v", err)
+	}
 	t.Log("PTY session connected")
 
 	// Collect PTY output

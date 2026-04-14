@@ -110,8 +110,8 @@ func TestDaytonaStopStartPreservesState(t *testing.T) {
 	})
 
 	// 2. Write a file inside the sandbox
-	t.Log("Writing /tmp/state.txt...")
-	writeResult, err := sandbox.Process.ExecuteCommand(ctx, `echo "persist-test" > /tmp/state.txt`)
+	t.Log("Writing /workspace/state.txt...")
+	writeResult, err := sandbox.Process.ExecuteCommand(ctx, `echo "persist-test" > /workspace/state.txt`)
 	if err != nil {
 		t.Fatalf("ExecuteCommand (write): %v", err)
 	}
@@ -120,11 +120,11 @@ func TestDaytonaStopStartPreservesState(t *testing.T) {
 	}
 
 	// Verify the file exists before stop
-	verifyResult, err := sandbox.Process.ExecuteCommand(ctx, "cat /tmp/state.txt")
+	verifyResult, err := sandbox.Process.ExecuteCommand(ctx, "cat /workspace/state.txt")
 	if err != nil {
 		t.Fatalf("ExecuteCommand (verify before stop): %v", err)
 	}
-	t.Logf("Before stop: cat /tmp/state.txt => %q", strings.TrimSpace(verifyResult.Result))
+	t.Logf("Before stop: cat /workspace/state.txt => %q", strings.TrimSpace(verifyResult.Result))
 
 	// 3. Stop the sandbox
 	t.Log("Stopping sandbox...")
@@ -145,8 +145,8 @@ func TestDaytonaStopStartPreservesState(t *testing.T) {
 	t.Logf("Sandbox started in %v", startDuration)
 
 	// 5. Read the file back
-	t.Log("Reading /tmp/state.txt after restart...")
-	readResult, err := sandbox.Process.ExecuteCommand(ctx, "cat /tmp/state.txt")
+	t.Log("Reading /workspace/state.txt after restart...")
+	readResult, err := sandbox.Process.ExecuteCommand(ctx, "cat /workspace/state.txt")
 	if err != nil {
 		t.Fatalf("ExecuteCommand (read after restart): %v", err)
 	}
@@ -156,7 +156,7 @@ func TestDaytonaStopStartPreservesState(t *testing.T) {
 
 	// 6. Assert the content survived the stop/start cycle
 	got := strings.TrimSpace(readResult.Result)
-	t.Logf("After restart: cat /tmp/state.txt => %q", got)
+	t.Logf("After restart: cat /workspace/state.txt => %q", got)
 
 	if got != "persist-test" {
 		t.Errorf("filesystem state NOT preserved: expected %q, got %q", "persist-test", got)
@@ -315,7 +315,9 @@ func TestDaytonaPtyStreamingIncremental(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePty: %v", err)
 	}
-	handle.WaitForConnection(ctx)
+	if err := handle.WaitForConnection(ctx); err != nil {
+		t.Fatalf("WaitForConnection: %v", err)
+	}
 	t.Log("PTY session connected")
 
 	// Track when each chunk arrives
@@ -432,7 +434,9 @@ func TestDaytonaStopDuringActiveProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePty: %v", err)
 	}
-	handle.WaitForConnection(ctx)
+	if err := handle.WaitForConnection(ctx); err != nil {
+		t.Fatalf("WaitForConnection: %v", err)
+	}
 	t.Log("PTY session connected")
 
 	// 3. Collect output in a goroutine
@@ -458,9 +462,26 @@ func TestDaytonaStopDuringActiveProcess(t *testing.T) {
 		t.Fatalf("Write to PTY: %v", err)
 	}
 
-	// 5. Collect output for 3 seconds (should get ~3 ticks)
-	t.Log("Collecting output for 3 seconds...")
-	time.Sleep(3 * time.Second)
+	// 5. Wait until we've observed at least 2 ticks (or 10s timeout)
+	t.Log("Waiting for at least 2 ticks...")
+	deadline := time.After(10 * time.Second)
+waitLoop:
+	for {
+		select {
+		case <-deadline:
+			t.Log("Timeout waiting for ticks, proceeding with Stop()")
+			break waitLoop
+		case <-time.After(200 * time.Millisecond):
+			combined := ""
+			for _, c := range chunks {
+				combined += c.data
+			}
+			if strings.Contains(combined, "tick 2") {
+				t.Log("Observed tick 2, proceeding with Stop()")
+				break waitLoop
+			}
+		}
+	}
 
 	// 6. Stop the sandbox while the process is still running
 	t.Log("Stopping sandbox while process is active...")
