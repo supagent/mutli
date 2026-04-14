@@ -182,6 +182,11 @@ server:
 daemon:
 	@$(MAKE) multica MULTICA_ARGS="daemon"
 
+## Start ModelRelay (free LLM proxy for OpenHarness agent, localhost:7352)
+modelrelay:
+	@echo "Starting ModelRelay on http://localhost:7352 ..."
+	@npx -y modelrelay
+
 cli:
 	@$(MAKE) multica MULTICA_ARGS="$(MULTICA_ARGS)"
 

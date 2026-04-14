@@ -131,6 +131,8 @@ multica daemon logs -n 100       # Last 100 lines
 
 The daemon auto-detects these AI CLIs on your PATH:
 
+**Coding Agents**
+
 | CLI | Command | Description |
 |-----|---------|-------------|
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `claude` | Anthropic's coding agent |
@@ -139,7 +141,36 @@ The daemon auto-detects these AI CLIs on your PATH:
 | OpenClaw | `openclaw` | Open-source coding agent |
 | Hermes | `hermes` | Nous Research coding agent |
 
+**Research / Knowledge Agents**
+
+| CLI | Command | Description |
+|-----|---------|-------------|
+| [OpenHarness](https://github.com/open-harness/open-harness) | `oh` | Research agent — web search, page reading, report writing |
+
 You need at least one installed. The daemon registers each detected CLI as an available runtime.
+
+### OpenHarness + ModelRelay (Free Quick Start)
+
+OpenHarness is the easiest way to try Multica — it connects to [ModelRelay](https://github.com/ellipticmarketing/modelrelay), a local proxy that provides 90+ free LLM models at $0/task.
+
+**Install:**
+
+```bash
+pip install openharness-ai   # Provides the `oh` CLI
+npx -y modelrelay            # Starts ModelRelay on localhost:7352
+```
+
+**How it works:** Unlike Claude Code (which requires an Anthropic API key) or Codex (which requires an OpenAI key), OpenHarness defaults to ModelRelay — a local proxy that routes to free model providers. No API keys needed.
+
+**To use paid models instead**, set these environment variables before starting the daemon:
+
+```bash
+export MULTICA_OH_BASE_URL=https://openrouter.ai/api/v1   # Or any OpenAI-compatible endpoint
+export MULTICA_OH_API_KEY=sk-...                           # Your API key
+export MULTICA_OH_MODEL=anthropic/claude-sonnet-4          # Your preferred model
+```
+
+> **Important:** If you install `oh` but don't start ModelRelay, the agent will fail to connect. Either run `npx -y modelrelay` or configure a paid provider via `MULTICA_OH_BASE_URL`.
 
 ### How It Works
 
@@ -178,6 +209,10 @@ Agent-specific overrides:
 | `MULTICA_OPENCLAW_MODEL` | Override the OpenClaw model used |
 | `MULTICA_HERMES_PATH` | Custom path to the `hermes` binary |
 | `MULTICA_HERMES_MODEL` | Override the Hermes model used |
+| `MULTICA_OH_PATH` | Custom path to the `oh` binary |
+| `MULTICA_OH_MODEL` | Override the model (default: `auto-fastest`) |
+| `MULTICA_OH_BASE_URL` | LLM endpoint (default: `http://localhost:7352/v1`) |
+| `MULTICA_OH_API_KEY` | API key for the LLM endpoint (default: `dummy`) |
 
 ### Self-Hosted Server
 

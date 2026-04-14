@@ -80,6 +80,7 @@ You also need at least one AI agent CLI installed:
 - [OpenClaw](https://github.com/openclaw/openclaw) (`openclaw` on PATH)
 - [OpenCode](https://github.com/anomalyco/opencode) (`opencode` on PATH)
 - [Hermes](https://github.com/NousResearch/hermes) (`hermes` on PATH)
+- [OpenHarness](https://github.com/open-harness/open-harness) (`oh` on PATH) — research agent, free with [ModelRelay](https://github.com/ellipticmarketing/modelrelay)
 
 ### b) One-command setup
 

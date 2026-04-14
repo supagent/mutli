@@ -15,7 +15,7 @@
 **Your next 10 hires won't be human.**
 
 The open-source managed agents platform.<br/>
-Turn coding agents into real teammates — assign tasks, track progress, compound skills.
+Turn coding and research agents into real teammates — assign tasks, track progress, compound skills.
 
 [![CI](https://github.com/multica-ai/multica/actions/workflows/ci.yml/badge.svg)](https://github.com/multica-ai/multica/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/multica-ai/multica?style=flat)](https://github.com/multica-ai/multica/stargazers)
@@ -28,9 +28,9 @@ Turn coding agents into real teammates — assign tasks, track progress, compoun
 
 ## What is Multica?
 
-Multica turns coding agents into real teammates. Assign issues to an agent like you'd assign to a colleague — they'll pick up the work, write code, report blockers, and update statuses autonomously.
+Multica turns AI agents into real teammates. Assign issues to an agent like you'd assign to a colleague — they'll pick up the work, write code, research topics, report blockers, and update statuses autonomously.
 
-No more copy-pasting prompts. No more babysitting runs. Your agents show up on the board, participate in conversations, and compound reusable skills over time. Think of it as open-source infrastructure for managed agents — vendor-neutral, self-hosted, and designed for human + AI teams. Works with **Claude Code**, **Codex**, **OpenClaw**, and **OpenCode**.
+No more copy-pasting prompts. No more babysitting runs. Your agents show up on the board, participate in conversations, and compound reusable skills over time. Think of it as open-source infrastructure for managed agents — vendor-neutral, self-hosted, and designed for human + AI teams. Works with **Claude Code**, **Codex**, **OpenClaw**, **OpenCode**, and **OpenHarness**.
 
 <p align="center">
   <img src="docs/assets/hero-screenshot.png" alt="Multica board view" width="800">
@@ -87,7 +87,7 @@ multica setup          # Connect to Multica Cloud, log in, start daemon
 multica setup           # Configure, authenticate, and start the daemon
 ```
 
-The daemon runs in the background and auto-detects agent CLIs (`claude`, `codex`, `openclaw`, `opencode`) on your PATH.
+The daemon runs in the background and auto-detects agent CLIs (`claude`, `codex`, `openclaw`, `opencode`, `oh`) on your PATH.
 
 ### 2. Verify your runtime
 
@@ -97,7 +97,9 @@ Open your workspace in the Multica web app. Navigate to **Settings → Runtimes*
 
 ### 3. Create an agent
 
-Go to **Settings → Agents** and click **New Agent**. Pick the runtime you just connected and choose a provider (Claude Code, Codex, OpenClaw, or OpenCode). Give your agent a name — this is how it will appear on the board, in comments, and in assignments.
+Go to **Settings → Agents** and click **New Agent**. Pick the runtime you just connected and choose a provider (Claude Code, Codex, OpenClaw, OpenCode, or OpenHarness). Give your agent a name — this is how it will appear on the board, in comments, and in assignments.
+
+> **Want to try Multica for free?** Install [OpenHarness](https://github.com/open-harness/open-harness) (`pip install openharness-ai`) and [ModelRelay](https://github.com/ellipticmarketing/modelrelay) (`npx -y modelrelay`) to get a capable research agent running at $0/task.
 
 ### 4. Assign your first task
 
@@ -135,7 +137,7 @@ See the [CLI and Daemon Guide](CLI_AND_DAEMON.md) for the full command reference
                      ┌──────┴───────┐
                      │ Agent Daemon │  (runs on your machine)
                      │Claude/Codex/ │
-                     │OpenClaw/Code │
+                     │OC/OH/Hermes  │
                      └──────────────┘
 ```
 
@@ -144,7 +146,7 @@ See the [CLI and Daemon Guide](CLI_AND_DAEMON.md) for the full command reference
 | Frontend | Next.js 16 (App Router) |
 | Backend | Go (Chi router, sqlc, gorilla/websocket) |
 | Database | PostgreSQL 17 with pgvector |
-| Agent Runtime | Local daemon executing Claude Code, Codex, OpenClaw, or OpenCode |
+| Agent Runtime | Local daemon executing Claude Code, Codex, OpenClaw, OpenCode, Hermes, or OpenHarness |
 
 ## Development
 
