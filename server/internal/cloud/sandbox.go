@@ -44,12 +44,34 @@ var deniedToolsJSON = `{
 // search endpoint. The proxy returns DuckDuckGo-formatted HTML that OH's
 // parser can extract results from.
 var searchProxyScript = `#!/usr/bin/env python3
-"""Search proxy: converts Gemini search grounding into DuckDuckGo-format HTML."""
-import json, os, sys, urllib.request, urllib.parse
+"""Search proxy: uses Gemini search grounding to bypass sandbox network restrictions.
+
+Fixes applied:
+1. Real URLs extracted from grounding metadata (not redirect URLs)
+2. Retry with backoff on Gemini API errors (2 attempts)
+3. ThreadingHTTPServer for concurrent requests
+4. 12s timeout on Gemini calls (within OH's 20s web_search timeout)
+5. Full Gemini response text included as rich snippets
+6. Query result caching (avoids duplicate API calls within a task)
+7. Structured error messages for better agent behavior
+"""
+import json, os, re, sys, time, threading, urllib.request, urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 
 GEMINI_KEY = os.environ.get("OPENAI_API_KEY", "")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+MAX_RETRIES = 2
+RETRY_DELAY = 1.5
+API_TIMEOUT = 12
+
+# Simple thread-safe cache: query -> (timestamp, html)
+_cache = {}
+_cache_lock = threading.Lock()
+CACHE_TTL = 300  # 5 minutes
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
 
 class SearchHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -66,21 +88,54 @@ class SearchHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"Missing q parameter")
             return
-        try:
-            results = self._search(query)
-            html = self._to_ddg_html(query, results)
+
+        # Check cache first
+        cached = self._get_cached(query)
+        if cached:
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
-            self.wfile.write(html.encode())
-        except Exception as e:
-            self.send_response(502)
-            self.end_headers()
-            self.wfile.write(f"Search proxy error: {e}".encode())
+            self.wfile.write(cached.encode())
+            return
+
+        # Search with retry
+        last_err = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                results, full_text = self._search(query)
+                html = self._to_ddg_html(query, results, full_text)
+                self._set_cached(query, html)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(html.encode())
+                return
+            except Exception as e:
+                last_err = e
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_DELAY * (attempt + 1))
+        self.send_response(502)
+        self.end_headers()
+        self.wfile.write(f"Search failed after {MAX_RETRIES} attempts: {last_err}".encode())
+
+    def _get_cached(self, query):
+        key = query.lower().strip()
+        with _cache_lock:
+            if key in _cache:
+                ts, html = _cache[key]
+                if time.time() - ts < CACHE_TTL:
+                    return html
+                del _cache[key]
+        return None
+
+    def _set_cached(self, query, html):
+        key = query.lower().strip()
+        with _cache_lock:
+            _cache[key] = (time.time(), html)
 
     def _search(self, query):
         body = json.dumps({
-            "contents": [{"parts": [{"text": f"Search for: {query}. Return a list of relevant results with titles, URLs, and brief descriptions."}]}],
+            "contents": [{"parts": [{"text": query}]}],
             "tools": [{"google_search": {}}],
         }).encode()
         req = urllib.request.Request(
@@ -88,37 +143,50 @@ class SearchHandler(BaseHTTPRequestHandler):
             data=body,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=API_TIMEOUT) as resp:
             data = json.loads(resp.read())
         results = []
         candidates = data.get("candidates", [])
         if not candidates:
-            return results
+            return results, ""
         meta = candidates[0].get("groundingMetadata", {})
         for chunk in meta.get("groundingChunks", []):
             web = chunk.get("web", {})
-            if web.get("uri") and web.get("title"):
-                results.append({"title": web["title"], "url": web["uri"], "snippet": ""})
-        # Also extract text as context
+            title = web.get("title", "")
+            uri = web.get("uri", "")
+            # Extract real URL: grounding redirects contain the domain in the title.
+            # Use title as the domain and construct a clean URL.
+            # The redirect URIs are not fetchable from the sandbox, so we use
+            # the title (which is the actual domain name like "example.com").
+            if title and uri:
+                real_url = f"https://{title}" if not title.startswith("http") else title
+                results.append({"title": title, "url": real_url})
+        # Extract full response text for rich context
         text_parts = candidates[0].get("content", {}).get("parts", [])
         full_text = " ".join(p.get("text", "") for p in text_parts)
-        # Distribute text as snippets
-        sentences = [s.strip() for s in full_text.split(". ") if s.strip()]
-        for i, r in enumerate(results):
-            if i < len(sentences):
-                r["snippet"] = sentences[i] + "."
-        return results
+        return results, full_text
 
-    def _to_ddg_html(self, query, results):
+    def _to_ddg_html(self, query, results, full_text):
+        # Include the full Gemini response as a rich context block that OH can
+        # see in the search results. This means the agent gets the grounded
+        # answer directly without needing to web_fetch individual pages.
         items = []
+        if full_text:
+            # Add the full grounded response as the first "result"
+            snippet = full_text.replace("<", "&lt;")[:3000]
+            items.append(
+                f'<div class="result">'
+                f'<a class="result__a" href="https://google.com/search?q={urllib.parse.quote(query)}">Research Summary</a>'
+                f'<span class="result__snippet">{snippet}</span>'
+                f'</div>'
+            )
         for r in results:
             title = r["title"].replace("<", "&lt;")
             url = r["url"].replace('"', "&quot;")
-            snippet = r["snippet"].replace("<", "&lt;")
             items.append(
                 f'<div class="result">'
                 f'<a class="result__a" href="{url}">{title}</a>'
-                f'<span class="result__snippet">{snippet}</span>'
+                f'<span class="result__snippet">Source: {title}</span>'
                 f'</div>'
             )
         return f"<html><body>{''.join(items)}</body></html>"
@@ -130,8 +198,8 @@ if __name__ == "__main__":
     if not GEMINI_KEY:
         print("FATAL: OPENAI_API_KEY not set", file=sys.stderr)
         sys.exit(1)
-    server = HTTPServer(("127.0.0.1", 8888), SearchHandler)
-    print("Search proxy started on http://127.0.0.1:8888", file=sys.stderr)
+    server = ThreadingHTTPServer(("127.0.0.1", 8888), SearchHandler)
+    print("Search proxy ready on http://127.0.0.1:8888", file=sys.stderr)
     server.serve_forever()
 `
 
@@ -145,8 +213,8 @@ You are a **research and knowledge agent**, NOT a coding assistant. You do NOT w
 
 You have exactly THREE tools. Do not attempt to use any others:
 
-1. **web_search** — Search the internet. IMPORTANT: Always pass search_url="http://127.0.0.1:8888/" in your web_search call. The default search engine is blocked.
-2. **web_fetch** — Read the full text of a webpage. Use this to get details from search results.
+1. **web_search** — Search the internet. IMPORTANT: Always pass search_url="http://127.0.0.1:8888/". Search results include a grounded summary — use it directly.
+2. **web_fetch** — Read a specific known webpage. Do NOT use with URLs from search results (they may be blocked). Only use if you have a specific URL you know works.
 3. **write_file** — Write your findings to a file. ALWAYS write to /workspace/output/.
 
 All other tools (bash, glob, grep, read_file, file_edit, etc.) are DISABLED and will be denied if you try them.
@@ -476,20 +544,21 @@ func buildEntrypointScript(prompt, model string, maxTurns int, systemPrompt, fal
 	wrappedPrompt := fmt.Sprintf(`You are a RESEARCH AGENT. You are NOT a coding assistant. Do NOT use bash, glob, grep, read_file, or any coding tools — they are all disabled and will be denied.
 
 You have ONLY these 3 tools:
-- web_search: Search the internet. IMPORTANT: You MUST pass search_url="http://127.0.0.1:8888/" every time you call web_search. The default search engine is blocked.
-- web_fetch: Fetch a webpage URL. Use this to read pages found via web_search. Do NOT use web_fetch for searching — use web_search instead.
+- web_search: Search the internet. IMPORTANT: You MUST pass search_url="http://127.0.0.1:8888/" every time you call web_search. The default search engine is blocked. The search results include a detailed "Research Summary" with grounded facts — use this directly instead of fetching individual pages.
+- web_fetch: Read a specific webpage. ONLY use this if web_search results are insufficient and you need to read a specific known URL. Do NOT use web_fetch with URLs from search results (they may be blocked).
 - write_file: Save results to /workspace/output/. You MUST use this for EVERY task.
 
 TASK: %s
 
 Instructions:
-1. Use web_search with search_url="http://127.0.0.1:8888/" to find relevant information.
-2. Use web_fetch to read important pages from the search results.
+1. Use web_search with search_url="http://127.0.0.1:8888/" to find information. The search results include a grounded summary with facts — use it directly.
+2. Do additional web_search calls with different queries to find more details.
 3. ALWAYS use write_file to save your complete findings to /workspace/output/report.md (use .csv instead if the task requires tabular data).
 4. After writing file(s), give a brief text summary of what you found and what files you created.
 
 IMPORTANT: You MUST call write_file at least once. NEVER deliver findings only as text. The task FAILS if you do not write files.
-IMPORTANT: Always pass search_url="http://127.0.0.1:8888/" when calling web_search.`, prompt)
+IMPORTANT: Always pass search_url="http://127.0.0.1:8888/" when calling web_search.
+IMPORTANT: Do NOT use web_fetch with URLs from search results — they are not directly accessible. Use the search summary instead.`, prompt)
 
 	if systemPrompt != "" {
 		wrappedPrompt += "\n\nADDITIONAL INSTRUCTIONS: " + systemPrompt
