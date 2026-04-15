@@ -521,6 +521,9 @@ func drainPTYData(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.
 				lineBuf.WriteString(full[idx+1:])
 				if msg, ok := ParseOHLine(line); ok {
 					processMsg(msg)
+				} else if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "$") && !strings.HasPrefix(trimmed, "daytona@") {
+					// Log non-JSON lines (Python tracebacks, errors, etc.)
+					slog.Warn("sandbox non-json output", "line", trimmed)
 				}
 			}
 		}
