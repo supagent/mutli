@@ -232,6 +232,25 @@ func TestModelRelayInSandbox(t *testing.T) {
 
 	// Check 7: oh version (verify OH is installed too)
 	run("oh version", "oh --version 2>&1")
+
+	// Check 8: Can DuckDuckGo be reached? (OH's web_search uses DDG)
+	run("DuckDuckGo reachable", "curl -sf -o /dev/null -w '%{http_code}' 'https://html.duckduckgo.com/html/?q=test' 2>&1 || echo 'DDG_BLOCKED'")
+
+	// Check 9: Run OH with web_search and capture FULL output (including errors)
+	run("OH web_search e2e",
+		"modelrelay > /dev/null 2>&1 & "+
+			"MR_PID=$! && "+
+			"sleep 5 && "+
+			"export OPENAI_API_KEY=dummy && "+
+			"oh -p 'Search the web for Vercel pricing and tell me the plans' "+
+			"--output-format stream-json "+
+			"--api-format openai "+
+			"--base-url http://localhost:7352/v1 "+
+			"--model auto-fastest "+
+			"--max-turns 3 "+
+			"--permission-mode full_auto "+
+			"2>&1 | head -30; "+
+			"kill $MR_PID 2>/dev/null")
 }
 
 func TestDaytonaSandboxRoundtrip(t *testing.T) {

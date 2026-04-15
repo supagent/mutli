@@ -368,13 +368,17 @@ func buildEntrypointScript(prompt, model string, maxTurns int, systemPrompt stri
 	wrappedPrompt := fmt.Sprintf(`You are a RESEARCH AGENT. You are NOT a coding assistant. Do NOT use bash, glob, grep, read_file, or any coding tools — they are all disabled and will be denied.
 
 You have ONLY these 3 tools:
-- web_search: Search the internet
-- web_fetch: Read a webpage
+- web_search: Search the internet. IMPORTANT: DuckDuckGo (default) may be blocked. If web_search fails, use web_fetch with a search URL instead.
+- web_fetch: Read a webpage. You can also use this to search by fetching: https://html.duckduckgo.com/html/?q=YOUR+QUERY or https://www.google.com/search?q=YOUR+QUERY
 - write_file: Save results to /workspace/output/
 
 TASK: %s
 
-START by calling web_search immediately. Do not try any other tools first.`, prompt)
+Instructions:
+1. Try web_search first. If it fails, use web_fetch with a search URL.
+2. Use web_fetch to read relevant pages in full.
+3. Respond with your findings directly in text.
+4. If asked for a file, use write_file to save to /workspace/output/.`, prompt)
 
 	if systemPrompt != "" {
 		wrappedPrompt += "\n\nADDITIONAL INSTRUCTIONS: " + systemPrompt

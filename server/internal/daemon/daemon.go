@@ -961,7 +961,7 @@ func (d *Daemon) buildEmbeddedPrompt(ctx context.Context, task Task) string {
 		return task.ChatMessage
 	}
 	// For assignment-triggered tasks, fetch issue details from the server.
-	issue, err := d.client.GetIssueDetail(ctx, task.IssueID)
+	issue, err := d.client.GetIssueDetail(ctx, task.IssueID, task.WorkspaceID)
 	if err != nil {
 		d.logger.Warn("failed to fetch issue details for embedded prompt, using issue ID only", "error", err)
 		return fmt.Sprintf("Research the topic for issue %s. Search the web for relevant information.", task.IssueID)

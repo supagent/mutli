@@ -214,9 +214,12 @@ type IssueDetail struct {
 }
 
 // GetIssueDetail fetches issue title and description for embedded agent prompts.
-func (c *Client) GetIssueDetail(ctx context.Context, issueID string) (*IssueDetail, error) {
+// Requires workspaceID because the issues API is workspace-scoped.
+func (c *Client) GetIssueDetail(ctx context.Context, issueID, workspaceID string) (*IssueDetail, error) {
 	var resp IssueDetail
-	if err := c.getJSON(ctx, fmt.Sprintf("/api/issues/%s", issueID), &resp); err != nil {
+	if err := c.getJSONWithHeaders(ctx, fmt.Sprintf("/api/issues/%s", issueID), &resp, map[string]string{
+		"X-Workspace-ID": workspaceID,
+	}); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -302,6 +305,33 @@ func (c *Client) getJSON(ctx context.Context, path string, respBody any) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+	}
+	if respBody == nil {
+		io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(respBody)
+}
+
+func (c *Client) getJSONWithHeaders(ctx context.Context, path string, respBody any, headers map[string]string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
