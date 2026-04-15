@@ -23,7 +23,8 @@ const (
 	ohVersion           = "0.1.6"
 
 	// Free fallback model on OpenRouter (used when ModelRelay fails to start).
-	openRouterFreeModel = "google/gemma-3-27b-it:free"
+	// Must support tool calling. See: https://openrouter.ai/models?pricing=free
+	openRouterFreeModel = "google/gemma-4-31b-it:free"
 	openRouterBaseURL   = "https://openrouter.ai/api/v1"
 )
 
@@ -328,10 +329,18 @@ set -e
 # --- Phase 1: Start ModelRelay ---
 modelrelay > /dev/null 2>&1 &
 MR_PID=$!
-sleep 3
 
-# --- Phase 2: Health check ---
-if curl -sf http://localhost:7352/v1/models > /dev/null 2>&1; then
+# --- Phase 2: Wait for ModelRelay (up to 30s) ---
+MR_READY=false
+for i in $(seq 1 30); do
+  if curl -sf http://localhost:7352/v1/models > /dev/null 2>&1; then
+    MR_READY=true
+    break
+  fi
+  sleep 1
+done
+
+if [ "$MR_READY" = "true" ]; then
   echo '{"type":"system","message":"Using ModelRelay (free)"}'
   BASE_URL="http://localhost:7352/v1"
   API_KEY="dummy"
