@@ -16,6 +16,124 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 )
 
+// TestDeniedToolsEnforcement diagnoses whether denied_tools settings.json is loaded by OH inside a sandbox.
+func TestDeniedToolsEnforcement(t *testing.T) {
+	apiKey := os.Getenv("DAYTONA_API_KEY")
+	if apiKey == "" {
+		t.Skip("DAYTONA_API_KEY not set")
+	}
+	openrouterKey := os.Getenv("OPENROUTER_API_KEY")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	client, err := daytona.NewClientWithConfig(&types.DaytonaConfig{APIKey: apiKey})
+	if err != nil {
+		t.Fatalf("NewClientWithConfig: %v", err)
+	}
+	defer client.Close(ctx)
+
+	// Same image as production
+	image := daytona.DebianSlim(nil).
+		AptGet([]string{"nodejs", "npm", "curl"}).
+		Run("npm install -g modelrelay").
+		PipInstall([]string{"openharness-ai==0.1.6"}).
+		Env("TERM", "dumb")
+
+	envVars := map[string]string{
+		"TERM":                   "dumb",
+		"OPENHARNESS_CONFIG_DIR": "/etc/multica-agent",
+	}
+	if openrouterKey != "" {
+		envVars["OPENROUTER_API_KEY"] = openrouterKey
+	}
+
+	t.Log("Creating sandbox...")
+	sandbox, err := client.Create(ctx, types.ImageParams{
+		SandboxBaseParams: types.SandboxBaseParams{EnvVars: envVars},
+		Image:             image,
+	}, options.WithTimeout(8*time.Minute))
+	if err != nil {
+		t.Fatalf("Create sandbox: %v", err)
+	}
+	t.Logf("Sandbox created: id=%s", sandbox.ID)
+
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cleanupCancel()
+		sandbox.Delete(cleanupCtx)
+	})
+
+	run := func(label, cmd string) string {
+		t.Logf("--- %s ---", label)
+		result, err := sandbox.Process.ExecuteCommand(ctx, cmd)
+		if err != nil {
+			t.Logf("  ERROR: %v", err)
+			return ""
+		}
+		out := strings.TrimSpace(result.Result)
+		t.Logf("  exit=%d output=%q", result.ExitCode, out[:min(len(out), 200)])
+		return out
+	}
+
+	// Step 1: Upload denied_tools settings.json
+	settingsJSON := `{"permission":{"mode":"full_auto","denied_tools":["bash","file_edit","file_read","glob","grep"]}}`
+	t.Log("Uploading settings.json to /etc/multica-agent/settings.json...")
+	if err := sandbox.FileSystem.UploadFile(ctx, []byte(settingsJSON), "/etc/multica-agent/settings.json"); err != nil {
+		t.Fatalf("Upload settings.json failed: %v", err)
+	}
+
+	// Step 2: Verify the file exists and content is correct
+	content := run("Verify settings.json", "cat /etc/multica-agent/settings.json")
+	if !strings.Contains(content, "denied_tools") {
+		t.Fatal("settings.json missing denied_tools")
+	}
+
+	// Step 3: Verify OPENHARNESS_CONFIG_DIR is set in sandbox env
+	run("Check env var in sandbox", "echo $OPENHARNESS_CONFIG_DIR")
+
+	// Step 4: Verify OH can read the config
+	run("OH config check", "OPENHARNESS_CONFIG_DIR=/etc/multica-agent python3 -c \"from openharness.config.settings import load_settings; s=load_settings(); print('denied_tools:', s.permission.denied_tools); print('mode:', s.permission.mode)\"")
+
+	// Step 5: Start ModelRelay and run OH with a bash-triggering prompt
+	run("Start ModelRelay", "modelrelay > /dev/null 2>&1 & sleep 5 && curl -sf http://localhost:7352/v1/models > /dev/null && echo MR_OK || echo MR_FAIL")
+
+	// Step 6: Run OH and check if bash is denied
+	ohOutput := run("Run OH with denied_tools",
+		`export OPENHARNESS_CONFIG_DIR=/etc/multica-agent && `+
+			`export OPENAI_API_KEY=dummy && `+
+			`oh -p "Run the command echo BASH_TEST using the bash tool" `+
+			`--output-format stream-json `+
+			`--api-format openai `+
+			`--base-url http://localhost:7352/v1 `+
+			`--model auto-fastest `+
+			`--max-turns 3 `+
+			`--permission-mode full_auto `+
+			`2>/dev/null`)
+
+	t.Logf("OH output length: %d", len(ohOutput))
+
+	// Check results — look for denial in tool_completed output, not tool_input
+	hasDenied := strings.Contains(strings.ToLower(ohOutput), "denied") ||
+		strings.Contains(strings.ToLower(ohOutput), "not allowed")
+	// Check if bash actually executed (output contains the echo result, not just the command in tool_input)
+	bashSucceeded := strings.Contains(ohOutput, `"output": "BASH_TEST"`) ||
+		strings.Contains(ohOutput, `"output":"BASH_TEST"`)
+
+	if bashSucceeded {
+		t.Error("FAIL: bash executed successfully — denied_tools NOT enforced")
+	}
+	if hasDenied {
+		t.Log("PASS: bash was explicitly denied")
+	}
+	if strings.Contains(ohOutput, "assistant_delta") || strings.Contains(ohOutput, "assistant_complete") {
+		t.Log("OH produced output (agent responded)")
+	}
+	if ohOutput == "" {
+		t.Error("OH produced no output — may have crashed")
+	}
+}
+
 // TestModelRelayInSandbox diagnoses why ModelRelay may not work inside a Daytona sandbox.
 // Checks: binary on PATH, Node version, npm install, startup, network egress.
 func TestModelRelayInSandbox(t *testing.T) {

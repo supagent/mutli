@@ -171,11 +171,17 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 	sm.logger.Info("sandbox created", "task", taskCfg.TaskID, "sandbox", sandbox.ID)
 
 	// Upload config files — fail closed if denied_tools can't be enforced.
-	if err := sandbox.FileSystem.UploadFile(runCtx, []byte(deniedToolsJSON), "/etc/multica-agent/settings.json"); err != nil {
+	// Write to BOTH the custom config dir AND OH's default location (~/.openharness/settings.json)
+	// to ensure denied_tools is loaded regardless of whether OPENHARNESS_CONFIG_DIR propagates to PTY.
+	sandbox.Process.ExecuteCommand(runCtx, "mkdir -p /home/daytona/.openharness")
+	if err := sandbox.FileSystem.UploadFile(runCtx, []byte(deniedToolsJSON), "/home/daytona/.openharness/settings.json"); err != nil {
 		cleanupSandbox(sandbox, sm.logger)
 		cancel()
 		return nil, fmt.Errorf("upload denied_tools config: %w (sandbox would run without safety restrictions)", err)
 	}
+	// Also write to OPENHARNESS_CONFIG_DIR location as belt-and-suspenders.
+	sandbox.FileSystem.UploadFile(runCtx, []byte(deniedToolsJSON), "/etc/multica-agent/settings.json")
+
 	if err := sandbox.FileSystem.UploadFile(runCtx, []byte(researchInstructions), "/home/daytona/CLAUDE.md"); err != nil {
 		sm.logger.Warn("failed to upload CLAUDE.md (non-fatal)", "error", err)
 	}
