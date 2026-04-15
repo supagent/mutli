@@ -110,8 +110,9 @@ func healthPortForProfile(profile string) int {
 
 func runDaemonStart(cmd *cobra.Command, _ []string) error {
 	// Load .env if present (best-effort — not an error if missing).
-	// Supports GOOGLE_AI_API_KEY, DAYTONA_API_KEY, etc. without manual export.
+	// Try CWD first, then parent directory (for when CWD is server/).
 	_ = godotenv.Load()
+	_ = godotenv.Load("../.env")
 
 	foreground, _ := cmd.Flags().GetBool("foreground")
 	if foreground {
