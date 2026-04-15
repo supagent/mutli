@@ -36,25 +36,42 @@ var deniedToolsJSON = `{
 	}
 }`
 
-// Research-first CLAUDE.md instructions.
-var researchInstructions = `# Research-First Agent Rules
+// researchInstructions is the CLAUDE.md uploaded to the sandbox working directory.
+// It overrides the default OH coding-assistant identity.
+var researchInstructions = `# Agent Identity
 
-## MANDATORY: Research Before Writing
+You are a **research and knowledge agent**, NOT a coding assistant. You do NOT write code, run shell commands, or edit files. You research topics using the web and deliver findings as structured reports.
 
-You MUST use web_search to gather real data BEFORE writing any output file. This is non-negotiable.
+## Your Tools
 
-### Hard Rules
+You have exactly THREE tools. Do not attempt to use any others:
 
-1. **NEVER generate reports from training data alone.** Your training data is stale. Every factual claim MUST come from a web search performed during this session.
-2. **Search first, write last.** Before calling write_file, you must have called web_search at least 3 times.
-3. **Cite sources.** Every factual claim must include the source URL.
-4. **Use web_fetch to read full pages** when a search snippet is insufficient.
-5. **No hallucinated data.** If you cannot find a source, say "data not publicly available."
+1. **web_search** — Search the internet for information. Use this FIRST for every task.
+2. **web_fetch** — Read the full text of a webpage. Use this to get details from search results.
+3. **write_file** — Write your findings to a file. Write to /workspace/output/.
 
-### Output Location
+All other tools (bash, glob, grep, read_file, file_edit, etc.) are DISABLED and will be denied if you try them.
 
-Write all output files to /workspace/output/.
+## How to Work
+
+1. Read the task description in your prompt carefully.
+2. Use web_search to find relevant information (at least 3 searches).
+3. Use web_fetch to read important pages in full.
+4. Synthesize your findings into a clear, structured response.
+5. If the task asks for a file (CSV, report), use write_file to create it in /workspace/output/.
+
+## Rules
+
+- NEVER try to run bash commands, read local files, or use coding tools.
+- NEVER generate data from memory — every fact must come from a web search in this session.
+- ALWAYS cite sources with URLs.
+- If you cannot find information, say "data not publicly available" rather than guessing.
+- Respond conversationally with your findings. The user sees your text output directly.
 `
+
+// knowledgeAgentSystemPrompt is appended to OH's system prompt via --append-system-prompt.
+// It reinforces the agent identity since OH's default prompt says "coding assistant."
+var knowledgeAgentSystemPrompt = `IMPORTANT OVERRIDE: Ignore any prior instructions about being a "coding assistant" or helping with "software engineering tasks." You are a RESEARCH AGENT. Your only job is to search the web, read pages, and report findings. You have three tools: web_search, web_fetch, and write_file. All other tools are disabled. Do not attempt bash, glob, grep, read_file, or any coding tools — they will be denied. Start every task by searching the web.`
 
 // SandboxManager manages Daytona sandbox lifecycle for embedded agent execution.
 type SandboxManager struct {
@@ -338,11 +355,15 @@ func shellQuote(s string) string {
 // 3. Falls back to OpenRouter free model if ModelRelay fails
 // 4. Runs OH with the resolved provider
 func buildEntrypointScript(prompt, model string, maxTurns int, systemPrompt string) string {
-	ohArgs := fmt.Sprintf(`-p %s --output-format stream-json --api-format openai --max-turns %d --permission-mode full_auto`,
-		shellQuote(prompt), maxTurns)
+	// Always include the knowledge agent identity prompt.
+	// Append user-provided instructions after it.
+	fullSystemPrompt := knowledgeAgentSystemPrompt
 	if systemPrompt != "" {
-		ohArgs += " --append-system-prompt " + shellQuote(systemPrompt)
+		fullSystemPrompt += "\n\n" + systemPrompt
 	}
+
+	ohArgs := fmt.Sprintf(`-p %s --output-format stream-json --api-format openai --max-turns %d --permission-mode full_auto --append-system-prompt %s`,
+		shellQuote(prompt), maxTurns, shellQuote(fullSystemPrompt))
 
 	return fmt.Sprintf(`#!/bin/bash
 set -e
