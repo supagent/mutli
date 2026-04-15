@@ -4,13 +4,14 @@ import "time"
 
 // SandboxConfig holds configuration for the Daytona sandbox manager.
 type SandboxConfig struct {
-	DaytonaAPIKey   string        // Daytona API authentication
-	DaytonaAPIURL   string        // Optional: custom Daytona API URL (SDK default if empty)
-	DefaultModel    string        // Default LLM model (default: "auto-fastest")
-	DefaultMaxTurns int           // Default max agent turns (default: 25)
-	LLMBaseURL      string        // LLM endpoint (default: "http://localhost:7352/v1")
-	LLMAPIKey       string        // LLM API key (default: "dummy")
-	ImageTimeout    time.Duration // Timeout for sandbox image build (default: 5min)
+	DaytonaAPIKey    string        // Daytona API authentication
+	DaytonaAPIURL    string        // Optional: custom Daytona API URL (SDK default if empty)
+	DefaultModel     string        // Default LLM model (default: "auto-fastest")
+	DefaultMaxTurns  int           // Default max agent turns (default: 25)
+	LLMBaseURL       string        // LLM endpoint (default: "http://localhost:7352/v1")
+	LLMAPIKey        string        // LLM API key (default: "dummy")
+	OpenRouterAPIKey string        // Fallback: OpenRouter key for free models when ModelRelay fails
+	ImageTimeout     time.Duration // Timeout for sandbox image build (default: 8min)
 }
 
 // TaskExecConfig holds per-task execution parameters.

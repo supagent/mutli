@@ -19,8 +19,12 @@ const (
 	defaultLLMBaseURL   = "http://localhost:7352/v1"
 	defaultLLMAPIKey    = "dummy"
 	defaultTimeout      = 20 * time.Minute
-	defaultImageTimeout = 5 * time.Minute
+	defaultImageTimeout = 8 * time.Minute // larger: installs Node.js + ModelRelay + OH
 	ohVersion           = "0.1.6"
+
+	// Free fallback model on OpenRouter (used when ModelRelay fails to start).
+	openRouterFreeModel = "google/gemma-3-27b-it:free"
+	openRouterBaseURL   = "https://openrouter.ai/api/v1"
 )
 
 // Denied tools config for knowledge worker mode.
@@ -128,8 +132,10 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		apiKey = defaultLLMAPIKey
 	}
 
-	// Build sandbox image
+	// Build sandbox image: Python (OH) + Node.js (ModelRelay)
 	image := daytona.DebianSlim(nil).
+		AptGet([]string{"nodejs", "npm", "curl"}).
+		Run("npm install -g modelrelay").
 		PipInstall([]string{fmt.Sprintf("openharness-ai==%s", ohVersion)}).
 		Env("TERM", "dumb")
 
@@ -138,15 +144,22 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		imageTimeout = defaultImageTimeout
 	}
 
-	// Create sandbox
+	// Resolve OpenRouter fallback key
+	openRouterKey := sm.cfg.OpenRouterAPIKey
+
+	// Create sandbox with env vars for both ModelRelay and OpenRouter fallback
 	sm.logger.Info("creating sandbox", "task", taskCfg.TaskID, "model", model)
+	envVars := map[string]string{
+		"TERM":                   "dumb",
+		"OPENHARNESS_CONFIG_DIR": "/etc/multica-agent",
+	}
+	if openRouterKey != "" {
+		envVars["OPENROUTER_API_KEY"] = openRouterKey
+	}
+
 	sandbox, err := sm.client.Create(runCtx, types.ImageParams{
 		SandboxBaseParams: types.SandboxBaseParams{
-			EnvVars: map[string]string{
-				"OPENAI_API_KEY":         apiKey,
-				"TERM":                   "dumb",
-				"OPENHARNESS_CONFIG_DIR": "/etc/multica-agent",
-			},
+			EnvVars: envVars,
 		},
 		Image: image,
 	}, options.WithTimeout(imageTimeout))
@@ -183,12 +196,20 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		return nil, fmt.Errorf("pty connect: %w", err)
 	}
 
-	// Build OH command
-	cmd := buildSandboxOHCommand(taskCfg.Prompt, baseURL, apiKey, model, maxTurns, taskCfg.SystemPrompt)
-	sm.logger.Info("running oh in sandbox", "task", taskCfg.TaskID, "cmd_len", len(cmd))
+	// Upload the entrypoint script that starts ModelRelay with fallback.
+	entrypoint := buildEntrypointScript(taskCfg.Prompt, model, maxTurns, taskCfg.SystemPrompt)
+	if err := sandbox.FileSystem.UploadFile(runCtx, []byte(entrypoint), "/tmp/run-agent.sh"); err != nil {
+		handle.Disconnect()
+		cleanupSandbox(sandbox, sm.logger)
+		cancel()
+		return nil, fmt.Errorf("upload entrypoint: %w", err)
+	}
+	sandbox.Process.ExecuteCommand(runCtx, "chmod +x /tmp/run-agent.sh")
 
-	// Write command to PTY
-	if _, err := handle.Write([]byte(cmd + "\nexit\n")); err != nil {
+	sm.logger.Info("running agent in sandbox", "task", taskCfg.TaskID, "model", model)
+
+	// Execute the entrypoint script via PTY
+	if _, err := handle.Write([]byte("/tmp/run-agent.sh\nexit\n")); err != nil {
 		handle.Disconnect()
 		cleanupSandbox(sandbox, sm.logger)
 		cancel()
@@ -289,28 +310,53 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// buildSandboxOHCommand constructs the oh CLI invocation for sandbox execution.
-// All parameters are shell-quoted to prevent injection.
-func buildSandboxOHCommand(prompt, baseURL, apiKey, model string, maxTurns int, systemPrompt string) string {
-	parts := []string{
-		"oh",
-		"-p", shellQuote(prompt),
-		"--output-format", "stream-json",
-		"--api-format", "openai",
-		"--base-url", shellQuote(baseURL),
-		"--api-key", shellQuote(apiKey),
-		"--model", shellQuote(model),
-		"--max-turns", fmt.Sprintf("%d", maxTurns),
-		"--permission-mode", "full_auto",
-		"--bare",
-		"2>/dev/null",
-	}
-
+// buildEntrypointScript creates a bash script that:
+// 1. Starts ModelRelay in background
+// 2. Health-checks ModelRelay
+// 3. Falls back to OpenRouter free model if ModelRelay fails
+// 4. Runs OH with the resolved provider
+func buildEntrypointScript(prompt, model string, maxTurns int, systemPrompt string) string {
+	ohArgs := fmt.Sprintf(`-p %s --output-format stream-json --api-format openai --max-turns %d --permission-mode full_auto --bare`,
+		shellQuote(prompt), maxTurns)
 	if systemPrompt != "" {
-		parts = append(parts[:len(parts)-1], "--append-system-prompt", shellQuote(systemPrompt), "2>/dev/null")
+		ohArgs += " --append-system-prompt " + shellQuote(systemPrompt)
 	}
 
-	return strings.Join(parts, " ")
+	return fmt.Sprintf(`#!/bin/bash
+set -e
+
+# --- Phase 1: Start ModelRelay ---
+modelrelay > /dev/null 2>&1 &
+MR_PID=$!
+sleep 3
+
+# --- Phase 2: Health check ---
+if curl -sf http://localhost:7352/v1/models > /dev/null 2>&1; then
+  echo '{"type":"system","message":"Using ModelRelay (free)"}'
+  BASE_URL="http://localhost:7352/v1"
+  API_KEY="dummy"
+  MODEL=%s
+else
+  kill $MR_PID 2>/dev/null || true
+  # --- Phase 3: Fallback to OpenRouter free model ---
+  if [ -n "$OPENROUTER_API_KEY" ]; then
+    echo '{"type":"system","message":"ModelRelay unavailable, falling back to OpenRouter free model"}'
+    BASE_URL="%s"
+    API_KEY="$OPENROUTER_API_KEY"
+    MODEL="%s"
+  else
+    echo '{"type":"error","message":"No LLM provider available: ModelRelay failed to start and OPENROUTER_API_KEY not set","recoverable":false}'
+    exit 1
+  fi
+fi
+
+# --- Phase 4: Run OpenHarness ---
+export OPENAI_API_KEY="$API_KEY"
+oh %s --base-url "$BASE_URL" --api-key "$API_KEY" --model "$MODEL" 2>/dev/null
+
+# Cleanup
+kill $MR_PID 2>/dev/null || true
+`, shellQuote(model), openRouterBaseURL, openRouterFreeModel, ohArgs)
 }
 
 func trySendCloud(ch chan<- agent.Message, msg agent.Message) {

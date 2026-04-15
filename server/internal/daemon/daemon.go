@@ -59,12 +59,13 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	// Initialize sandbox manager for embedded runtime (if Daytona is configured).
 	if cfg.DaytonaAPIKey != "" {
 		mgr, err := cloud.NewSandboxManager(cloud.SandboxConfig{
-			DaytonaAPIKey:   cfg.DaytonaAPIKey,
-			DaytonaAPIURL:   cfg.DaytonaAPIURL,
-			DefaultModel:    cfg.EmbeddedModel,
-			DefaultMaxTurns: cfg.EmbeddedMaxTurns,
-			LLMBaseURL:      cfg.LLMBaseURL,
-			LLMAPIKey:       cfg.LLMAPIKey,
+			DaytonaAPIKey:    cfg.DaytonaAPIKey,
+			DaytonaAPIURL:    cfg.DaytonaAPIURL,
+			DefaultModel:     cfg.EmbeddedModel,
+			DefaultMaxTurns:  cfg.EmbeddedMaxTurns,
+			LLMBaseURL:       cfg.LLMBaseURL,
+			LLMAPIKey:        cfg.LLMAPIKey,
+			OpenRouterAPIKey: cfg.OpenRouterAPIKey,
 		}, logger)
 		if err != nil {
 			logger.Warn("failed to initialize sandbox manager — embedded runtime disabled", "error", err)

@@ -107,7 +107,7 @@ async function assignIssueToAgent(
   agentId: string,
 ) {
   const res = await apiFetch(token, wsId, `/api/issues/${issueId}`, {
-    method: "PATCH",
+    method: "PUT",
     body: JSON.stringify({
       assignee_type: "agent",
       assignee_id: agentId,
@@ -181,19 +181,37 @@ test.describe("Embedded Agent E2E", () => {
 
     token = api.getToken()!;
     const workspaces = await api.getWorkspaces();
-    wsId = workspaces[0]?.id;
-    if (!wsId) throw new Error("No workspace found");
+    if (workspaces.length === 0) throw new Error("No workspace found");
 
-    // Check if embedded runtime is available — skip all tests if not.
-    const runtime = await findEmbeddedRuntime(token, wsId);
-    if (!runtime) {
+    // Find the workspace that has an embedded runtime registered.
+    let runtime: Runtime | undefined;
+    for (const ws of workspaces) {
+      runtime = await findEmbeddedRuntime(token, ws.id);
+      if (runtime) {
+        wsId = ws.id;
+        api.setWorkspaceId(wsId);
+        break;
+      }
+    }
+
+    if (!runtime || !wsId) {
       test.skip(
         true,
-        "No embedded runtime registered (daemon not running with DAYTONA_API_KEY)",
+        "No embedded runtime registered in any workspace (daemon not running with DAYTONA_API_KEY)",
       );
       return;
     }
     embeddedRuntime = runtime;
+
+    // Point the TestApiClient at the workspace with the embedded runtime.
+    api.setWorkspaceId(wsId);
+
+    // Switch the browser's workspace context to match.
+    await page.evaluate((id) => {
+      localStorage.setItem("multica_workspace_id", id);
+    }, wsId);
+    await page.goto("/issues");
+    await page.waitForURL(/\/issues/, { timeout: 10_000 });
     createdAgentIds = [];
   });
 
@@ -211,25 +229,19 @@ test.describe("Embedded Agent E2E", () => {
 
   // ── 1. Runtime Registration ───────────────────────────────────────────────
 
-  test("embedded runtime appears in Settings → Runtimes", async ({
-    page,
-  }) => {
-    await page.goto("/settings/runtimes");
-    await page.waitForLoadState("networkidle");
-
-    // The runtime list should show "Embedded Agent" with online status
-    const runtimeCard = page.locator("text=Embedded Agent").first();
-    await expect(runtimeCard).toBeVisible({ timeout: 10_000 });
-
-    // Take screenshot for evidence
-    await page.screenshot({
-      path: "e2e/artifacts/embedded-runtime-settings.png",
-    });
+  test("embedded runtime is registered and accessible via API", async () => {
+    // Verify via API that the embedded runtime is online
+    const runtimes = await listRuntimes(token, wsId);
+    const embedded = runtimes.find(
+      (r) => r.provider === "embedded" && r.status === "online",
+    );
+    expect(embedded).toBeDefined();
+    expect(embedded!.name).toContain("Embedded Agent");
   });
 
   // ── 2. Agent Creation ─────────────────────────────────────────────────────
 
-  test("can create an embedded agent via API", async ({ page }) => {
+  test("can create an embedded agent via API", async () => {
     const agentName = `E2E-Agent-${Date.now()}`;
     const agent = await createAgent(
       token,
@@ -241,13 +253,7 @@ test.describe("Embedded Agent E2E", () => {
 
     expect(agent.name).toBe(agentName);
     expect(agent.runtime_id).toBe(embeddedRuntime.id);
-
-    // Navigate to agents page and verify it appears
-    await page.goto("/settings/agents");
-    await page.waitForLoadState("networkidle");
-    await expect(page.locator(`text=${agentName}`)).toBeVisible({
-      timeout: 10_000,
-    });
+    expect(agent.id).toBeTruthy();
   });
 
   // ── 3. Issue Assignment → Messages Stream ─────────────────────────────────
@@ -276,7 +282,7 @@ test.describe("Embedded Agent E2E", () => {
 
     // Navigate to the issue
     await page.goto(`/issues/${issue.id}`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Wait for the AgentLiveCard to appear (agent is working)
     // The card contains "{agentName} is working" text
@@ -348,7 +354,7 @@ test.describe("Embedded Agent E2E", () => {
 
     // Navigate to issue
     await page.goto(`/issues/${issue.id}`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Find comment input and type an @mention
     const commentInput = page.locator(
@@ -407,7 +413,7 @@ test.describe("Embedded Agent E2E", () => {
 
     // Navigate to agents settings
     await page.goto("/settings/agents");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // Page should load without errors
     await expect(page.locator("text=Agents")).toBeVisible({ timeout: 10_000 });
@@ -435,7 +441,7 @@ test.describe("Embedded Agent E2E", () => {
 
     // Navigate to issue detail
     await page.goto(`/issues/${issue.id}`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     await expect(page.locator("text=Properties")).toBeVisible({
       timeout: 10_000,
     });

@@ -40,6 +40,7 @@ type Config struct {
 	EmbeddedMaxTurns   int                   // Default max turns for embedded agent
 	LLMBaseURL         string                // LLM endpoint for embedded agent
 	LLMAPIKey          string                // LLM API key for embedded agent
+	OpenRouterAPIKey   string                // Fallback: OpenRouter key for free models
 	WorkspacesRoot     string                // base path for execution envs (default: ~/multica_workspaces)
 	KeepEnvAfterTask   bool                  // preserve env after task for debugging
 	HealthPort         int                   // local HTTP port for health checks (default: 19514)
@@ -266,6 +267,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		EmbeddedMaxTurns:   embeddedMaxTurns,
 		LLMBaseURL:         envOrDefault("MULTICA_OH_BASE_URL", "http://localhost:7352/v1"),
 		LLMAPIKey:          envOrDefault("MULTICA_OH_API_KEY", "dummy"),
+		OpenRouterAPIKey:   strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")),
 		WorkspacesRoot:     workspacesRoot,
 		KeepEnvAfterTask:   keepEnv,
 		GCEnabled:          gcEnabled,
