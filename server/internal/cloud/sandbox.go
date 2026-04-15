@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"mime"
+	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -277,6 +280,12 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 			"duration", duration.Round(time.Millisecond),
 			"textLen", textOutput.Len(), "toolOutputLen", toolOutput.Len())
 
+		// Extract artifacts from /workspace/output/ before destroying the sandbox.
+		var artifacts []agent.Artifact
+		if finalStatus == "completed" {
+			artifacts = extractArtifacts(runCtx, sandbox, sm.logger)
+		}
+
 		// Cleanup sandbox
 		cleanupSandbox(sandbox, sm.logger)
 
@@ -285,6 +294,7 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 			Output:     finalOutput,
 			Error:      finalError,
 			DurationMs: duration.Milliseconds(),
+			Artifacts:  artifacts,
 		}
 	}()
 
@@ -441,4 +451,85 @@ func cleanupSandbox(sandbox *daytona.Sandbox, logger *slog.Logger) {
 	} else {
 		logger.Info("sandbox deleted", "id", sandbox.ID)
 	}
+}
+
+const (
+	artifactOutputDir = "/workspace/output/"
+	maxArtifactSize   = 5 << 20  // 5 MB per file
+	maxTotalArtifacts = 20 << 20 // 20 MB total
+)
+
+// extractArtifacts lists and downloads top-level files from /workspace/output/.
+// Subdirectories are ignored. Returns nil (no error) if the directory is empty
+// or doesn't exist — artifact extraction is best-effort.
+func extractArtifacts(ctx context.Context, sandbox *daytona.Sandbox, logger *slog.Logger) []agent.Artifact {
+	files, err := sandbox.FileSystem.ListFiles(ctx, artifactOutputDir)
+	if err != nil {
+		logger.Warn("artifact extraction: failed to list output dir", "error", err)
+		return nil
+	}
+
+	var artifacts []agent.Artifact
+	var totalSize int64
+
+	for _, f := range files {
+		if f.IsDirectory {
+			logger.Info("artifact extraction: skipping subdirectory", "name", f.Name)
+			continue
+		}
+		if f.Size > maxArtifactSize {
+			logger.Warn("artifact extraction: file exceeds size limit, skipping",
+				"name", f.Name, "size", f.Size, "limit", maxArtifactSize)
+			continue
+		}
+		if totalSize+f.Size > maxTotalArtifacts {
+			logger.Warn("artifact extraction: total size limit reached, skipping remaining files",
+				"name", f.Name, "totalSoFar", totalSize, "limit", maxTotalArtifacts)
+			break
+		}
+
+		remotePath := artifactOutputDir + f.Name
+		data, err := sandbox.FileSystem.DownloadFile(ctx, remotePath, nil)
+		if err != nil {
+			logger.Warn("artifact extraction: failed to download file", "name", f.Name, "error", err)
+			continue
+		}
+
+		totalSize += int64(len(data))
+		artifacts = append(artifacts, agent.Artifact{
+			Filename:    f.Name,
+			Data:        data,
+			ContentType: detectContentType(f.Name, data),
+		})
+		logger.Info("artifact extracted", "name", f.Name, "size", len(data))
+	}
+
+	if len(artifacts) > 0 {
+		logger.Info("artifact extraction complete", "count", len(artifacts), "totalBytes", totalSize)
+	}
+	return artifacts
+}
+
+// detectContentType returns a MIME type for the given filename, falling back
+// to http.DetectContentType for unknown extensions.
+func detectContentType(filename string, data []byte) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	// Check the extension-override map from file.go conventions.
+	if ct, ok := extContentTypes[ext]; ok {
+		return ct
+	}
+	// Standard mime package lookup.
+	if ct := mime.TypeByExtension(ext); ct != "" {
+		return ct
+	}
+	// Fallback to content sniffing.
+	return http.DetectContentType(data)
+}
+
+// extContentTypes mirrors the overrides in handler/file.go for consistency.
+var extContentTypes = map[string]string{
+	".md":   "text/markdown",
+	".csv":  "text/csv",
+	".json": "application/json",
+	".svg":  "image/svg+xml",
 }
