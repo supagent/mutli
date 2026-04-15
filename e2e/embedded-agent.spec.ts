@@ -202,16 +202,17 @@ test.describe("Embedded Agent E2E", () => {
     embeddedRuntime = runtime;
     api.setWorkspaceId(wsId);
 
-    // Authenticate browser: set token AND workspace BEFORE first navigation.
-    await page.goto("/login");
-    await page.evaluate(
-      ({ t, w }) => {
-        localStorage.setItem("multica_token", t);
-        localStorage.setItem("multica_workspace_id", w);
-      },
-      { t: token, w: wsId },
-    );
-    await page.goto("/issues");
+    // Use loginAsDefault first (proven to work), then switch workspace.
+    await loginAsDefault(page);
+
+    // Switch to the workspace with the embedded runtime via localStorage.
+    await page.evaluate((w) => {
+      localStorage.setItem("multica_workspace_id", w);
+      localStorage.setItem("multica_last_workspace_id", w);
+    }, wsId);
+
+    // Reload to pick up the new workspace context.
+    await page.reload();
     await page.waitForURL(/\/issues/, { timeout: 15_000 });
     createdAgentIds = [];
   });
