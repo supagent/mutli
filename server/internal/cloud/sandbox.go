@@ -150,6 +150,11 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		apiKey = defaultLLMAPIKey
 	}
 
+	// Create message channel early so we can send lifecycle status updates.
+	msgCh := make(chan agent.Message, 256)
+
+	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Creating sandbox environment..."})
+
 	// Build sandbox image: Python (OH) + Node.js (ModelRelay)
 	image := daytona.DebianSlim(nil).
 		AptGet([]string{"nodejs", "npm", "curl"}).
@@ -186,6 +191,7 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		return nil, fmt.Errorf("create sandbox: %w", err)
 	}
 	sm.logger.Info("sandbox created", "task", taskCfg.TaskID, "sandbox", sandbox.ID)
+	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Sandbox ready. Configuring agent..."})
 
 	// Upload config files — fail closed if denied_tools can't be enforced.
 	// Write to BOTH the custom config dir AND OH's default location (~/.openharness/settings.json)
@@ -230,6 +236,7 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 	}
 	sandbox.Process.ExecuteCommand(runCtx, "chmod +x /tmp/run-agent.sh")
 
+	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Starting research agent (this may take a moment)..."})
 	sm.logger.Info("running agent in sandbox", "task", taskCfg.TaskID, "model", model)
 
 	// Execute the entrypoint script via PTY
@@ -240,8 +247,7 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		return nil, fmt.Errorf("write to pty: %w", err)
 	}
 
-	// Create channels
-	msgCh := make(chan agent.Message, 256)
+	// Result channel (msgCh already created above for lifecycle messages).
 	resCh := make(chan agent.Result, 1)
 
 	// Drain PTY output in background
