@@ -259,6 +259,10 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 	for name, entry := range d.cfg.Agents {
 		// Embedded runtime has no local binary — skip CLI version detection.
 		if name == "embedded" {
+			if d.sandboxMgr == nil {
+				d.logger.Warn("skip registering embedded runtime: sandbox manager not initialized")
+				continue
+			}
 			displayName := "Embedded Agent"
 			if d.cfg.DeviceName != "" {
 				displayName = fmt.Sprintf("Embedded Agent (%s)", d.cfg.DeviceName)
@@ -520,7 +524,7 @@ func (d *Daemon) handlePing(ctx context.Context, rt Runtime, pingID string) {
 
 	// Embedded runtime: report healthy if sandbox manager is initialized.
 	if rt.Provider == "embedded" {
-		status := "success"
+		status := "completed"
 		errMsg := ""
 		if d.sandboxMgr == nil {
 			status = "failed"

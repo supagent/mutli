@@ -14,13 +14,13 @@ import (
 )
 
 const (
-	defaultModel       = "auto-fastest"
-	defaultMaxTurns    = 25
-	defaultLLMBaseURL  = "http://localhost:7352/v1"
-	defaultLLMAPIKey   = "dummy"
-	defaultTimeout     = 20 * time.Minute
+	defaultModel        = "auto-fastest"
+	defaultMaxTurns     = 25
+	defaultLLMBaseURL   = "http://localhost:7352/v1"
+	defaultLLMAPIKey    = "dummy"
+	defaultTimeout      = 20 * time.Minute
 	defaultImageTimeout = 5 * time.Minute
-	ohVersion          = "0.1.6"
+	ohVersion           = "0.1.6"
 )
 
 // Denied tools config for knowledge worker mode.
@@ -156,12 +156,14 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 	}
 	sm.logger.Info("sandbox created", "task", taskCfg.TaskID, "sandbox", sandbox.ID)
 
-	// Upload config files
+	// Upload config files — fail closed if denied_tools can't be enforced.
 	if err := sandbox.FileSystem.UploadFile(runCtx, []byte(deniedToolsJSON), "/etc/multica-agent/settings.json"); err != nil {
-		sm.logger.Warn("failed to upload denied_tools config", "error", err)
+		cleanupSandbox(sandbox, sm.logger)
+		cancel()
+		return nil, fmt.Errorf("upload denied_tools config: %w (sandbox would run without safety restrictions)", err)
 	}
 	if err := sandbox.FileSystem.UploadFile(runCtx, []byte(researchInstructions), "/home/daytona/CLAUDE.md"); err != nil {
-		sm.logger.Warn("failed to upload CLAUDE.md", "error", err)
+		sm.logger.Warn("failed to upload CLAUDE.md (non-fatal)", "error", err)
 	}
 
 	// Create output directory
@@ -207,11 +209,9 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		finalStatus := "completed"
 		var finalError string
 
-		drainPTYData(handle.DataChan(), msgCh)
+		// Drain PTY data with context awareness (respects timeout/cancel).
+		drainPTYData(runCtx, handle.DataChan(), msgCh, &output)
 		close(msgCh)
-
-		// Collect accumulated output from messages we sent
-		// (output is built during drain via the caller reading msgCh)
 
 		handle.Disconnect()
 		duration := time.Since(startTime)
@@ -242,45 +242,64 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 
 // drainPTYData reads from a PTY data channel, buffers partial lines,
 // parses complete lines via ParseOHLine, and sends messages to msgCh.
-func drainPTYData(dataCh <-chan []byte, msgCh chan<- agent.Message) {
+// It also accumulates text output in the provided builder.
+// Respects context cancellation to avoid blocking indefinitely.
+func drainPTYData(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.Message, output *strings.Builder) {
 	var lineBuf strings.Builder
-	for data := range dataCh {
-		lineBuf.Write(data)
-		for {
-			full := lineBuf.String()
-			idx := strings.Index(full, "\n")
-			if idx < 0 {
-				break
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case data, ok := <-dataCh:
+			if !ok {
+				// Channel closed — flush remaining
+				if remaining := strings.TrimSpace(lineBuf.String()); remaining != "" {
+					if msg, ok := ParseOHLine(remaining); ok {
+						if msg.Type == agent.MessageText {
+							output.WriteString(msg.Content)
+						}
+						trySendCloud(msgCh, msg)
+					}
+				}
+				return
 			}
-			line := full[:idx]
-			lineBuf.Reset()
-			lineBuf.WriteString(full[idx+1:])
-			if msg, ok := ParseOHLine(line); ok {
-				trySendCloud(msgCh, msg)
+			lineBuf.Write(data)
+			for {
+				full := lineBuf.String()
+				idx := strings.Index(full, "\n")
+				if idx < 0 {
+					break
+				}
+				line := full[:idx]
+				lineBuf.Reset()
+				lineBuf.WriteString(full[idx+1:])
+				if msg, ok := ParseOHLine(line); ok {
+					if msg.Type == agent.MessageText {
+						output.WriteString(msg.Content)
+					}
+					trySendCloud(msgCh, msg)
+				}
 			}
-		}
-	}
-	// Flush remaining partial line
-	if remaining := strings.TrimSpace(lineBuf.String()); remaining != "" {
-		if msg, ok := ParseOHLine(remaining); ok {
-			trySendCloud(msgCh, msg)
 		}
 	}
 }
 
-// buildSandboxOHCommand constructs the oh CLI invocation for sandbox execution.
-func buildSandboxOHCommand(prompt, baseURL, apiKey, model string, maxTurns int, systemPrompt string) string {
-	// Escape prompt for shell (use single quotes, escape existing single quotes)
-	escapedPrompt := strings.ReplaceAll(prompt, "'", "'\\''")
+// shellQuote wraps a string in single quotes for safe shell interpolation.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
 
+// buildSandboxOHCommand constructs the oh CLI invocation for sandbox execution.
+// All parameters are shell-quoted to prevent injection.
+func buildSandboxOHCommand(prompt, baseURL, apiKey, model string, maxTurns int, systemPrompt string) string {
 	parts := []string{
 		"oh",
-		"-p", fmt.Sprintf("'%s'", escapedPrompt),
+		"-p", shellQuote(prompt),
 		"--output-format", "stream-json",
 		"--api-format", "openai",
-		"--base-url", baseURL,
-		"--api-key", apiKey,
-		"--model", model,
+		"--base-url", shellQuote(baseURL),
+		"--api-key", shellQuote(apiKey),
+		"--model", shellQuote(model),
 		"--max-turns", fmt.Sprintf("%d", maxTurns),
 		"--permission-mode", "full_auto",
 		"--bare",
@@ -288,8 +307,7 @@ func buildSandboxOHCommand(prompt, baseURL, apiKey, model string, maxTurns int, 
 	}
 
 	if systemPrompt != "" {
-		escapedSys := strings.ReplaceAll(systemPrompt, "'", "'\\''")
-		parts = append(parts[:len(parts)-1], "--append-system-prompt", fmt.Sprintf("'%s'", escapedSys), "2>/dev/null")
+		parts = append(parts[:len(parts)-1], "--append-system-prompt", shellQuote(systemPrompt), "2>/dev/null")
 	}
 
 	return strings.Join(parts, " ")

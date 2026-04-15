@@ -248,6 +248,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 
+	embeddedMaxTurns, err := intFromEnv("MULTICA_EMBEDDED_MAX_TURNS", 25)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		ServerBaseURL:      serverBaseURL,
 		DaemonID:           daemonID,
@@ -258,7 +263,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		DaytonaAPIKey:      daytonaKey,
 		DaytonaAPIURL:      strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
 		EmbeddedModel:      envOrDefault("MULTICA_EMBEDDED_MODEL", "auto-fastest"),
-		EmbeddedMaxTurns:   func() int { n, _ := intFromEnv("MULTICA_EMBEDDED_MAX_TURNS", 25); return n }(),
+		EmbeddedMaxTurns:   embeddedMaxTurns,
 		LLMBaseURL:         envOrDefault("MULTICA_OH_BASE_URL", "http://localhost:7352/v1"),
 		LLMAPIKey:          envOrDefault("MULTICA_OH_API_KEY", "dummy"),
 		WorkspacesRoot:     workspacesRoot,
