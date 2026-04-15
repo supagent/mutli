@@ -109,6 +109,20 @@ async function listTasksByIssue(
   return Array.isArray(data) ? data : data.tasks ?? data.runs ?? [];
 }
 
+async function createComment(
+  token: string,
+  wsId: string,
+  issueId: string,
+  content: string,
+) {
+  const res = await apiFetch(token, wsId, `/api/issues/${issueId}/comments`, {
+    method: "POST",
+    body: JSON.stringify({ content, type: "comment" }),
+  });
+  if (!res.ok) throw new Error(`createComment: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
 async function deleteAgent(token: string, wsId: string, agentId: string) {
   await apiFetch(token, wsId, `/api/agents/${agentId}/archive`, { method: "POST" });
 }
@@ -251,7 +265,34 @@ test.describe("Embedded Agent E2E", () => {
     console.log(`Task ${finished!.id}: ${messages.length} messages, types: ${[...types].join(", ")}`);
   });
 
-  // ── 5. Existing CLI agents unaffected ─────────────────────────────────────
+  // ── 5. @mention triggers task ───────────────────────────────────────────
+
+  test("@mention agent in comment triggers a task", async () => {
+    test.setTimeout(300_000);
+
+    const agentName = `E2E-Mention-${Date.now()}`;
+    const agent = await createAgent(token, wsId, agentName, embeddedRuntime.id);
+    createdAgentIds.push(agent.id);
+
+    const issue = await api.createIssue(`E2E Mention Test ${Date.now()}`);
+
+    // Post a comment with @mention using the mention:// protocol
+    const mentionContent = `[@${agentName}](mention://agent/${agent.id}) what is 2+2?`;
+    await createComment(token, wsId, issue.id, mentionContent);
+
+    // Poll until a task appears for this issue
+    const tasks = await pollUntil(
+      () => listTasksByIssue(token, wsId, issue.id),
+      (t) => t.length > 0,
+      60_000,
+      2_000,
+    );
+
+    expect(tasks.length).toBeGreaterThan(0);
+    console.log(`@mention triggered task: ${tasks[0].id}, status: ${tasks[0].status}`);
+  });
+
+  // ── 6. Existing CLI agents unaffected ─────────────────────────────────────
 
   test("other runtimes remain online alongside embedded", async () => {
     const allRuntimes = await listRuntimes(token, wsId);
