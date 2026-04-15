@@ -233,12 +233,13 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		defer close(resCh)
 
 		startTime := time.Now()
-		var output strings.Builder
+		var textOutput strings.Builder
+		var toolOutput strings.Builder
 		finalStatus := "completed"
 		var finalError string
 
 		// Drain PTY data with context awareness (respects timeout/cancel).
-		drainPTYData(runCtx, handle.DataChan(), msgCh, &output)
+		drainPTYData(runCtx, handle.DataChan(), msgCh, &textOutput, &toolOutput)
 		close(msgCh)
 
 		handle.Disconnect()
@@ -252,14 +253,22 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 			finalError = "execution cancelled"
 		}
 
-		sm.logger.Info("sandbox task finished", "task", taskCfg.TaskID, "status", finalStatus, "duration", duration.Round(time.Millisecond))
+		// Use text output if available, fall back to tool output summary.
+		finalOutput := textOutput.String()
+		if finalOutput == "" && toolOutput.Len() > 0 {
+			finalOutput = toolOutput.String()
+		}
+
+		sm.logger.Info("sandbox task finished", "task", taskCfg.TaskID, "status", finalStatus,
+			"duration", duration.Round(time.Millisecond),
+			"textLen", textOutput.Len(), "toolOutputLen", toolOutput.Len())
 
 		// Cleanup sandbox
 		cleanupSandbox(sandbox, sm.logger)
 
 		resCh <- agent.Result{
 			Status:     finalStatus,
-			Output:     output.String(),
+			Output:     finalOutput,
 			Error:      finalError,
 			DurationMs: duration.Milliseconds(),
 		}
@@ -270,9 +279,22 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 
 // drainPTYData reads from a PTY data channel, buffers partial lines,
 // parses complete lines via ParseOHLine, and sends messages to msgCh.
-// It also accumulates text output in the provided builder.
+// Accumulates assistant text in textOutput and tool results in toolOutput (fallback).
 // Respects context cancellation to avoid blocking indefinitely.
-func drainPTYData(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.Message, output *strings.Builder) {
+func drainPTYData(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.Message, textOutput, toolOutput *strings.Builder) {
+	processMsg := func(msg agent.Message) {
+		switch msg.Type {
+		case agent.MessageText:
+			textOutput.WriteString(msg.Content)
+		case agent.MessageToolResult:
+			if msg.Output != "" {
+				toolOutput.WriteString(msg.Output)
+				toolOutput.WriteByte('\n')
+			}
+		}
+		trySendCloud(msgCh, msg)
+	}
+
 	var lineBuf strings.Builder
 	for {
 		select {
@@ -280,13 +302,9 @@ func drainPTYData(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.
 			return
 		case data, ok := <-dataCh:
 			if !ok {
-				// Channel closed — flush remaining
 				if remaining := strings.TrimSpace(lineBuf.String()); remaining != "" {
 					if msg, ok := ParseOHLine(remaining); ok {
-						if msg.Type == agent.MessageText {
-							output.WriteString(msg.Content)
-						}
-						trySendCloud(msgCh, msg)
+						processMsg(msg)
 					}
 				}
 				return
@@ -302,10 +320,7 @@ func drainPTYData(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.
 				lineBuf.Reset()
 				lineBuf.WriteString(full[idx+1:])
 				if msg, ok := ParseOHLine(line); ok {
-					if msg.Type == agent.MessageText {
-						output.WriteString(msg.Content)
-					}
-					trySendCloud(msgCh, msg)
+					processMsg(msg)
 				}
 			}
 		}
@@ -323,7 +338,7 @@ func shellQuote(s string) string {
 // 3. Falls back to OpenRouter free model if ModelRelay fails
 // 4. Runs OH with the resolved provider
 func buildEntrypointScript(prompt, model string, maxTurns int, systemPrompt string) string {
-	ohArgs := fmt.Sprintf(`-p %s --output-format stream-json --api-format openai --max-turns %d --permission-mode full_auto --bare`,
+	ohArgs := fmt.Sprintf(`-p %s --output-format stream-json --api-format openai --max-turns %d --permission-mode full_auto`,
 		shellQuote(prompt), maxTurns)
 	if systemPrompt != "" {
 		ohArgs += " --append-system-prompt " + shellQuote(systemPrompt)

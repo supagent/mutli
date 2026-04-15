@@ -10,7 +10,7 @@ import (
 
 // drainLineBuffer simulates the PTY line buffer logic by feeding chunks
 // through drainPTYData and collecting parsed messages.
-func drainLineBuffer(chunks []string) ([]agent.Message, string) {
+func drainLineBuffer(chunks []string) ([]agent.Message, string, string) {
 	msgCh := make(chan agent.Message, 256)
 	dataCh := make(chan []byte, len(chunks))
 	for _, c := range chunks {
@@ -18,19 +18,19 @@ func drainLineBuffer(chunks []string) ([]agent.Message, string) {
 	}
 	close(dataCh)
 
-	var output strings.Builder
-	drainPTYData(context.Background(), dataCh, msgCh, &output)
+	var textOutput, toolOutput strings.Builder
+	drainPTYData(context.Background(), dataCh, msgCh, &textOutput, &toolOutput)
 	close(msgCh)
 
 	var msgs []agent.Message
 	for m := range msgCh {
 		msgs = append(msgs, m)
 	}
-	return msgs, output.String()
+	return msgs, textOutput.String(), toolOutput.String()
 }
 
 func TestLineBuffer_SingleComplete(t *testing.T) {
-	msgs, output := drainLineBuffer([]string{
+	msgs, output, _ := drainLineBuffer([]string{
 		"{\"type\": \"assistant_delta\", \"text\": \"Hello\"}\n",
 	})
 	if len(msgs) != 1 {
@@ -45,7 +45,7 @@ func TestLineBuffer_SingleComplete(t *testing.T) {
 }
 
 func TestLineBuffer_SplitAcrossChunks(t *testing.T) {
-	msgs, _ := drainLineBuffer([]string{
+	msgs, _, _ := drainLineBuffer([]string{
 		"{\"type\": \"assistant_del",
 		"ta\", \"text\": \"Split\"}\n",
 	})
@@ -58,7 +58,7 @@ func TestLineBuffer_SplitAcrossChunks(t *testing.T) {
 }
 
 func TestLineBuffer_MultipleInOneChunk(t *testing.T) {
-	msgs, output := drainLineBuffer([]string{
+	msgs, output, _ := drainLineBuffer([]string{
 		"{\"type\": \"assistant_delta\", \"text\": \"A\"}\n{\"type\": \"assistant_delta\", \"text\": \"B\"}\n",
 	})
 	if len(msgs) != 2 {
@@ -73,7 +73,7 @@ func TestLineBuffer_MultipleInOneChunk(t *testing.T) {
 }
 
 func TestLineBuffer_ANSIWrapped(t *testing.T) {
-	msgs, _ := drainLineBuffer([]string{
+	msgs, _, _ := drainLineBuffer([]string{
 		"\x1b[?2004l\r{\"type\": \"assistant_delta\", \"text\": \"4\"}\r\n",
 	})
 	if len(msgs) != 1 {
@@ -85,7 +85,7 @@ func TestLineBuffer_ANSIWrapped(t *testing.T) {
 }
 
 func TestLineBuffer_NonJSONSkipped(t *testing.T) {
-	msgs, _ := drainLineBuffer([]string{
+	msgs, _, _ := drainLineBuffer([]string{
 		"root@sandbox:~# \n",
 		"oh -p \"hello\" --output-format stream-json\n",
 		"{\"type\": \"assistant_delta\", \"text\": \"Hi\"}\n",
@@ -100,7 +100,7 @@ func TestLineBuffer_NonJSONSkipped(t *testing.T) {
 }
 
 func TestLineBuffer_EmptyChunks(t *testing.T) {
-	msgs, _ := drainLineBuffer([]string{
+	msgs, _, _ := drainLineBuffer([]string{
 		"",
 		"",
 		"{\"type\": \"assistant_delta\", \"text\": \"Ok\"}\n",
@@ -112,7 +112,7 @@ func TestLineBuffer_EmptyChunks(t *testing.T) {
 }
 
 func TestLineBuffer_FlushRemaining(t *testing.T) {
-	msgs, _ := drainLineBuffer([]string{
+	msgs, _, _ := drainLineBuffer([]string{
 		"{\"type\": \"assistant_delta\", \"text\": \"Partial\"}",
 	})
 	if len(msgs) != 1 {
@@ -132,8 +132,8 @@ func TestLineBuffer_ContextCancellation(t *testing.T) {
 	dataCh <- []byte("{\"type\": \"assistant_delta\", \"text\": \"Before\"}\n")
 	cancel()
 
-	var output strings.Builder
-	drainPTYData(ctx, dataCh, msgCh, &output)
+	var textOutput, toolOutput strings.Builder
+	drainPTYData(ctx, dataCh, msgCh, &textOutput, &toolOutput)
 	close(msgCh)
 
 	var msgs []agent.Message
@@ -147,7 +147,7 @@ func TestLineBuffer_ContextCancellation(t *testing.T) {
 }
 
 func TestLineBuffer_OutputAccumulation(t *testing.T) {
-	msgs, output := drainLineBuffer([]string{
+	msgs, output, _ := drainLineBuffer([]string{
 		"{\"type\": \"assistant_delta\", \"text\": \"Part 1\"}\n",
 		"{\"type\": \"tool_started\", \"tool_name\": \"web_search\", \"tool_input\": {\"query\": \"test\"}}\n",
 		"{\"type\": \"assistant_delta\", \"text\": \" Part 2\"}\n",
@@ -158,6 +158,30 @@ func TestLineBuffer_OutputAccumulation(t *testing.T) {
 	// Output should only contain text messages, not tool events
 	if output != "Part 1 Part 2" {
 		t.Errorf("expected output 'Part 1 Part 2', got %q", output)
+	}
+}
+
+func TestLineBuffer_ToolOutputFallback(t *testing.T) {
+	// When no text messages exist, tool output should be collected as fallback
+	msgs, textOutput, toolOutput := drainLineBuffer([]string{
+		"{\"type\": \"tool_started\", \"tool_name\": \"web_search\", \"tool_input\": {\"query\": \"test\"}}\n",
+		"{\"type\": \"tool_completed\", \"tool_name\": \"web_search\", \"output\": \"Result: found 5 items\", \"is_error\": false}\n",
+		"{\"type\": \"tool_started\", \"tool_name\": \"web_fetch\", \"tool_input\": {\"url\": \"https://example.com\"}}\n",
+		"{\"type\": \"tool_completed\", \"tool_name\": \"web_fetch\", \"output\": \"Page content here\", \"is_error\": false}\n",
+	})
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(msgs))
+	}
+	// No text output (no assistant_delta/complete events)
+	if textOutput != "" {
+		t.Errorf("expected empty text output, got %q", textOutput)
+	}
+	// Tool output should contain both results
+	if !strings.Contains(toolOutput, "Result: found 5 items") {
+		t.Errorf("tool output missing first result: %q", toolOutput)
+	}
+	if !strings.Contains(toolOutput, "Page content here") {
+		t.Errorf("tool output missing second result: %q", toolOutput)
 	}
 }
 
