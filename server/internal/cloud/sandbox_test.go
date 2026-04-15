@@ -274,6 +274,10 @@ func TestBuildEntrypointScript_ContainsGemini(t *testing.T) {
 	if !strings.Contains(script, "--api-format openai") {
 		t.Error("entrypoint script should pass --api-format openai to oh")
 	}
+	// Verify write_file compliance instructions are in the prompt
+	if !strings.Contains(script, "MUST call write_file") {
+		t.Error("entrypoint script should contain write_file compliance instruction")
+	}
 }
 
 func TestBuildEntrypointScript_NoAPIKey(t *testing.T) {
@@ -285,6 +289,80 @@ func TestBuildEntrypointScript_NoAPIKey(t *testing.T) {
 	// Should still reference Gemini base URL (just with empty key)
 	if !strings.Contains(script, "generativelanguage.googleapis.com") {
 		t.Error("entrypoint script should always contain Google AI Studio base URL")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// sanitizeFilename tests
+// ---------------------------------------------------------------------------
+
+func TestSanitizeFilename(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+		ok    bool
+	}{
+		{"simple", "report.md", "report.md", true},
+		{"with spaces", "my report.md", "my report.md", true},
+		{"path traversal", "../../etc/passwd", "", false},
+		{"path traversal subtle", "foo/../../../etc/shadow", "", false},
+		{"absolute path", "/etc/passwd", "", false},
+		{"null byte", "file\x00.md", "", false},
+		{"control chars", "file\x01\x02.md", "", false},
+		{"directory slash", "subdir/file.md", "", false},
+		{"backslash", "sub\\file.md", "", false},
+		{"dot dot", "..", "", false},
+		{"single dot", ".", "", false},
+		{"empty", "", "", false},
+		{"leading dot", ".hidden", ".hidden", true},
+		{"unicode", "报告.md", "报告.md", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := sanitizeFilename(tt.input)
+			if ok != tt.ok {
+				t.Errorf("sanitizeFilename(%q) ok = %v, want %v", tt.input, ok, tt.ok)
+			}
+			if got != tt.want {
+				t.Errorf("sanitizeFilename(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isAllowedFileType tests
+// ---------------------------------------------------------------------------
+
+func TestIsAllowedFileType(t *testing.T) {
+	tests := []struct {
+		filename string
+		allowed  bool
+	}{
+		{"report.md", true},
+		{"data.csv", true},
+		{"config.json", true},
+		{"notes.txt", true},
+		{"doc.pdf", true},
+		{"sheet.xlsx", true},
+		{"REPORT.MD", true},   // case insensitive
+		{"data.CSV", true},
+		{"script.sh", false},
+		{"binary.exe", false},
+		{"app.bin", false},
+		{"image.png", false},
+		{"archive.zip", false},
+		{"noextension", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.filename, func(t *testing.T) {
+			if got := isAllowedFileType(tt.filename); got != tt.allowed {
+				t.Errorf("isAllowedFileType(%q) = %v, want %v", tt.filename, got, tt.allowed)
+			}
+		})
 	}
 }
 

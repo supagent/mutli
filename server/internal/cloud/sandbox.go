@@ -41,7 +41,7 @@ var deniedToolsJSON = `{
 // It overrides the default OH coding-assistant identity.
 var researchInstructions = `# Agent Identity
 
-You are a **research and knowledge agent**, NOT a coding assistant. You do NOT write code, run shell commands, or edit files. You research topics using the web and deliver findings as structured reports.
+You are a **research and knowledge agent**, NOT a coding assistant. You do NOT write code, run shell commands, or edit files. You research topics using the web and deliver findings as structured files.
 
 ## Your Tools
 
@@ -49,7 +49,7 @@ You have exactly THREE tools. Do not attempt to use any others:
 
 1. **web_search** — Search the internet for information. Use this FIRST for every task.
 2. **web_fetch** — Read the full text of a webpage. Use this to get details from search results.
-3. **write_file** — Write your findings to a file. Write to /workspace/output/.
+3. **write_file** — Write your findings to a file. ALWAYS write to /workspace/output/.
 
 All other tools (bash, glob, grep, read_file, file_edit, etc.) are DISABLED and will be denied if you try them.
 
@@ -58,21 +58,24 @@ All other tools (bash, glob, grep, read_file, file_edit, etc.) are DISABLED and 
 1. Read the task description in your prompt carefully.
 2. Use web_search to find relevant information (at least 3 searches).
 3. Use web_fetch to read important pages in full.
-4. Synthesize your findings into a clear, structured response.
-5. If the task asks for a file (CSV, report), use write_file to create it in /workspace/output/.
+4. ALWAYS use write_file to save your findings to /workspace/output/report.md (or .csv if tabular data is appropriate).
+5. After writing the file(s), provide a brief text summary of what you found and what files you created.
 
-## Rules
+## CRITICAL RULE: You MUST use write_file
+
+Every task MUST end with at least one write_file call to /workspace/output/. NEVER deliver your findings only as text in your response. The user expects downloadable file attachments. If you do not call write_file, the task has FAILED.
+
+## Other Rules
 
 - NEVER try to run bash commands, read local files, or use coding tools.
 - NEVER generate data from memory — every fact must come from a web search in this session.
 - ALWAYS cite sources with URLs.
 - If you cannot find information, say "data not publicly available" rather than guessing.
-- Respond conversationally with your findings. The user sees your text output directly.
 `
 
 // knowledgeAgentSystemPrompt is appended to OH's system prompt via --append-system-prompt.
 // It reinforces the agent identity since OH's default prompt says "coding assistant."
-var knowledgeAgentSystemPrompt = `IMPORTANT OVERRIDE: Ignore any prior instructions about being a "coding assistant" or helping with "software engineering tasks." You are a RESEARCH AGENT. Your only job is to search the web, read pages, and report findings. You have three tools: web_search, web_fetch, and write_file. All other tools are disabled. Do not attempt bash, glob, grep, read_file, or any coding tools — they will be denied. Start every task by searching the web.`
+var knowledgeAgentSystemPrompt = `IMPORTANT OVERRIDE: Ignore any prior instructions about being a "coding assistant" or helping with "software engineering tasks." You are a RESEARCH AGENT. Your only job is to search the web, read pages, and write findings to files. You have three tools: web_search, web_fetch, and write_file. All other tools are disabled. You MUST call write_file at least once per task to save your findings to /workspace/output/. NEVER deliver findings only as text — the user expects downloadable file attachments. Start every task by searching the web, then ALWAYS finish by writing files.`
 
 // SandboxManager manages Daytona sandbox lifecycle for embedded agent execution.
 type SandboxManager struct {
@@ -371,15 +374,17 @@ func buildEntrypointScript(prompt, model string, maxTurns int, systemPrompt, fal
 You have ONLY these 3 tools:
 - web_search: Search the internet. IMPORTANT: DuckDuckGo (default) may be blocked. If web_search fails, use web_fetch with a search URL instead.
 - web_fetch: Read a webpage. You can also use this to search by fetching: https://html.duckduckgo.com/html/?q=YOUR+QUERY or https://www.google.com/search?q=YOUR+QUERY
-- write_file: Save results to /workspace/output/
+- write_file: Save results to /workspace/output/. You MUST use this for EVERY task.
 
 TASK: %s
 
 Instructions:
 1. Try web_search first. If it fails, use web_fetch with a search URL.
 2. Use web_fetch to read relevant pages in full.
-3. Respond with your findings directly in text.
-4. If asked for a file, use write_file to save to /workspace/output/.`, prompt)
+3. ALWAYS use write_file to save your complete findings to /workspace/output/report.md (use .csv instead if the task requires tabular data).
+4. After writing file(s), give a brief text summary of what you found and what files you created.
+
+IMPORTANT: You MUST call write_file at least once. NEVER deliver findings only as text. The task FAILS if you do not write files.`, prompt)
 
 	if systemPrompt != "" {
 		wrappedPrompt += "\n\nADDITIONAL INSTRUCTIONS: " + systemPrompt
@@ -449,31 +454,46 @@ func extractArtifacts(ctx context.Context, sandbox *daytona.Sandbox, logger *slo
 			logger.Info("artifact extraction: skipping subdirectory", "name", f.Name)
 			continue
 		}
+
+		// Sanitize filename — reject path traversal, control chars, etc.
+		safeName, ok := sanitizeFilename(f.Name)
+		if !ok {
+			logger.Warn("artifact extraction: rejected unsafe filename", "name", f.Name)
+			continue
+		}
+
+		// Check file type allowlist.
+		if !isAllowedFileType(safeName) {
+			logger.Warn("artifact extraction: file type not allowed, skipping",
+				"name", safeName, "ext", filepath.Ext(safeName))
+			continue
+		}
+
 		if f.Size > maxArtifactSize {
 			logger.Warn("artifact extraction: file exceeds size limit, skipping",
-				"name", f.Name, "size", f.Size, "limit", maxArtifactSize)
+				"name", safeName, "size", f.Size, "limit", maxArtifactSize)
 			continue
 		}
 		if totalSize+f.Size > maxTotalArtifacts {
 			logger.Warn("artifact extraction: total size limit reached, skipping remaining files",
-				"name", f.Name, "totalSoFar", totalSize, "limit", maxTotalArtifacts)
+				"name", safeName, "totalSoFar", totalSize, "limit", maxTotalArtifacts)
 			break
 		}
 
 		remotePath := artifactOutputDir + f.Name
 		data, err := sandbox.FileSystem.DownloadFile(ctx, remotePath, nil)
 		if err != nil {
-			logger.Warn("artifact extraction: failed to download file", "name", f.Name, "error", err)
+			logger.Warn("artifact extraction: failed to download file", "name", safeName, "error", err)
 			continue
 		}
 
 		totalSize += int64(len(data))
 		artifacts = append(artifacts, agent.Artifact{
-			Filename:    f.Name,
+			Filename:    safeName,
 			Data:        data,
-			ContentType: detectContentType(f.Name, data),
+			ContentType: detectContentType(safeName, data),
 		})
-		logger.Info("artifact extracted", "name", f.Name, "size", len(data))
+		logger.Info("artifact extracted", "name", safeName, "size", len(data))
 	}
 
 	if len(artifacts) > 0 {
@@ -504,4 +524,43 @@ var extContentTypes = map[string]string{
 	".csv":  "text/csv",
 	".json": "application/json",
 	".svg":  "image/svg+xml",
+}
+
+// allowedFileTypes are the only extensions extracted from the sandbox.
+var allowedFileTypes = map[string]bool{
+	".md":   true,
+	".csv":  true,
+	".json": true,
+	".txt":  true,
+	".pdf":  true,
+	".xlsx": true,
+}
+
+// isAllowedFileType returns true if the filename has an allowed extension.
+func isAllowedFileType(filename string) bool {
+	ext := strings.ToLower(filepath.Ext(filename))
+	return allowedFileTypes[ext]
+}
+
+// sanitizeFilename validates and cleans a filename from the sandbox.
+// Returns the sanitized name and true if valid, or empty string and false if rejected.
+func sanitizeFilename(name string) (string, bool) {
+	if name == "" || name == "." || name == ".." {
+		return "", false
+	}
+	// Reject control characters and null bytes.
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return "", false
+		}
+	}
+	// Reject path separators (no subdirectory traversal).
+	if strings.ContainsAny(name, "/\\") {
+		return "", false
+	}
+	// Reject path traversal patterns.
+	if strings.Contains(name, "..") {
+		return "", false
+	}
+	return name, true
 }

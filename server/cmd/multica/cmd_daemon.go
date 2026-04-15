@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -108,6 +109,10 @@ func healthPortForProfile(profile string) int {
 // --- daemon start ---
 
 func runDaemonStart(cmd *cobra.Command, _ []string) error {
+	// Load .env if present (best-effort — not an error if missing).
+	// Supports GOOGLE_AI_API_KEY, DAYTONA_API_KEY, etc. without manual export.
+	_ = godotenv.Load()
+
 	foreground, _ := cmd.Flags().GetBool("foreground")
 	if foreground {
 		return runDaemonForeground(cmd)
