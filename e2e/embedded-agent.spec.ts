@@ -103,9 +103,10 @@ async function listTasksByIssue(
   wsId: string,
   issueId: string,
 ): Promise<AgentTask[]> {
-  const res = await apiFetch(token, wsId, `/api/issues/${issueId}/tasks`);
+  const res = await apiFetch(token, wsId, `/api/issues/${issueId}/task-runs`);
   if (!res.ok) return [];
-  return res.json();
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.tasks ?? data.runs ?? [];
 }
 
 async function deleteAgent(token: string, wsId: string, agentId: string) {
