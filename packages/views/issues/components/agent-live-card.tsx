@@ -183,8 +183,14 @@ export function AgentLiveCard({ issueId }: AgentLiveCardProps) {
         if (existing) {
           const items = [...existing.items, item].sort((a, b) => a.seq - b.seq);
           next.set(msg.task_id, { ...existing, items });
+        } else {
+          // Task entry not yet created (dispatch event may arrive late for sandbox agents).
+          // Create a placeholder entry so messages aren't dropped.
+          next.set(msg.task_id, {
+            task: { id: msg.task_id, status: "running" } as AgentTask,
+            items: [item],
+          });
         }
-        // If we don't have this task yet, the dispatch handler will pick it up
         return next;
       });
     }, [issueId]),
