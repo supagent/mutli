@@ -199,7 +199,7 @@ if __name__ == "__main__":
         print("FATAL: OPENAI_API_KEY not set", file=sys.stderr)
         sys.exit(1)
     server = ThreadingHTTPServer(("127.0.0.1", 8888), SearchHandler)
-    print("Search proxy ready on http://127.0.0.1:8888", file=sys.stderr)
+    print("Search proxy ready on http://localhost:8888", file=sys.stderr)
     server.serve_forever()
 `
 
@@ -213,7 +213,7 @@ You are a **research and knowledge agent**, NOT a coding assistant. You do NOT w
 
 You have exactly THREE tools. Do not attempt to use any others:
 
-1. **web_search** — Search the internet. IMPORTANT: Always pass search_url="http://127.0.0.1:8888/". Search results include a grounded summary — use it directly.
+1. **web_search** — Search the internet. IMPORTANT: Always pass search_url="http://localhost:8888/". Search results include a grounded summary — use it directly.
 2. **web_fetch** — Read a specific known webpage. Do NOT use with URLs from search results (they may be blocked). Only use if you have a specific URL you know works.
 3. **write_file** — Write your findings to a file. ALWAYS write to /workspace/output/.
 
@@ -547,20 +547,20 @@ func buildEntrypointScript(prompt, model string, maxTurns int, systemPrompt, fal
 	wrappedPrompt := fmt.Sprintf(`You are a RESEARCH AGENT. You are NOT a coding assistant. Do NOT use bash, glob, grep, read_file, or any coding tools — they are all disabled and will be denied.
 
 You have ONLY these 3 tools:
-- web_search: Search the internet. IMPORTANT: You MUST pass search_url="http://127.0.0.1:8888/" every time you call web_search. The default search engine is blocked. The search results include a detailed "Research Summary" with grounded facts — use this directly instead of fetching individual pages.
+- web_search: Search the internet. IMPORTANT: You MUST pass search_url="http://localhost:8888/" every time you call web_search. The default search engine is blocked. The search results include a detailed "Research Summary" with grounded facts — use this directly instead of fetching individual pages.
 - web_fetch: Read a specific webpage. ONLY use this if web_search results are insufficient and you need to read a specific known URL. Do NOT use web_fetch with URLs from search results (they may be blocked).
 - write_file: Save results to /workspace/output/. You MUST use this for EVERY task.
 
 TASK: %s
 
 Instructions:
-1. Use web_search with search_url="http://127.0.0.1:8888/" to find information. The search results include a grounded summary with facts — use it directly.
+1. Use web_search with search_url="http://localhost:8888/" to find information. The search results include a grounded summary with facts — use it directly.
 2. Do additional web_search calls with different queries to find more details.
 3. ALWAYS use write_file to save your complete findings to /workspace/output/report.md (use .csv instead if the task requires tabular data).
 4. After writing file(s), give a brief text summary of what you found and what files you created.
 
 IMPORTANT: You MUST call write_file at least once. NEVER deliver findings only as text. The task FAILS if you do not write files.
-IMPORTANT: Always pass search_url="http://127.0.0.1:8888/" when calling web_search.
+IMPORTANT: Always pass search_url="http://localhost:8888/" when calling web_search.
 IMPORTANT: Do NOT use web_fetch with URLs from search results — they are not directly accessible. Use the search summary instead.`, prompt)
 
 	if systemPrompt != "" {
@@ -586,7 +586,7 @@ PROXY_PID=$!
 
 # Wait for proxy to be ready (up to 5s)
 for i in $(seq 1 10); do
-  if curl -sf --max-time 1 "http://127.0.0.1:8888/health" > /dev/null 2>&1; then
+  if curl -sf --max-time 1 "http://localhost:8888/health" > /dev/null 2>&1; then
     break
   fi
   sleep 0.5
