@@ -361,15 +361,27 @@ func shellQuote(s string) string {
 // 3. Falls back to OpenRouter free model if ModelRelay fails
 // 4. Runs OH with the resolved provider
 func buildEntrypointScript(prompt, model string, maxTurns int, systemPrompt string) string {
-	// Always include the knowledge agent identity prompt.
-	// Append user-provided instructions after it.
-	fullSystemPrompt := knowledgeAgentSystemPrompt
+	// Wrap the user's task in explicit identity + instructions.
+	// This goes in the -p prompt itself (not --append-system-prompt) because
+	// the default OH system prompt says "coding assistant" and the model
+	// follows that over appended overrides.
+	wrappedPrompt := fmt.Sprintf(`You are a RESEARCH AGENT. You are NOT a coding assistant. Do NOT use bash, glob, grep, read_file, or any coding tools — they are all disabled and will be denied.
+
+You have ONLY these 3 tools:
+- web_search: Search the internet
+- web_fetch: Read a webpage
+- write_file: Save results to /workspace/output/
+
+TASK: %s
+
+START by calling web_search immediately. Do not try any other tools first.`, prompt)
+
 	if systemPrompt != "" {
-		fullSystemPrompt += "\n\n" + systemPrompt
+		wrappedPrompt += "\n\nADDITIONAL INSTRUCTIONS: " + systemPrompt
 	}
 
 	ohArgs := fmt.Sprintf(`-p %s --output-format stream-json --api-format openai --max-turns %d --permission-mode full_auto --append-system-prompt %s`,
-		shellQuote(prompt), maxTurns, shellQuote(fullSystemPrompt))
+		shellQuote(wrappedPrompt), maxTurns, shellQuote(knowledgeAgentSystemPrompt))
 
 	return fmt.Sprintf(`#!/bin/bash
 set -e
