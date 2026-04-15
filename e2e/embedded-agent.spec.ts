@@ -370,31 +370,30 @@ test.describe("Embedded Agent E2E", () => {
       .last();
     await submitBtn.click();
 
-    // Wait for task to be created (poll API)
+    // Wait for task to be created (poll API) — fail if no task appears
     const taskData = await pollUntil(
       () => getActiveTasks(token, wsId, issue.id),
       (data) => data.tasks.length > 0,
       30_000,
       2_000,
-    ).catch(() => ({ tasks: [] as AgentTask[] }));
+    );
+    expect(taskData.tasks.length).toBeGreaterThan(0);
 
-    if (taskData.tasks.length > 0) {
-      // Task was created — wait for the live card
-      const liveCard = page.locator(`text=${agentName} is working`);
-      await expect(liveCard).toBeVisible({ timeout: 90_000 });
+    // Task was created — wait for the live card
+    const liveCard = page.locator(`text=${agentName} is working`);
+    await expect(liveCard).toBeVisible({ timeout: 90_000 });
 
-      await page.screenshot({
-        path: "e2e/artifacts/embedded-agent-mention-streaming.png",
-      });
+    await page.screenshot({
+      path: "e2e/artifacts/embedded-agent-mention-streaming.png",
+    });
 
-      // Wait for completion
-      await pollUntil(
-        () => listTasksByIssue(token, wsId, issue.id),
-        (tasks) => tasks.some((t) => t.status !== "queued" && t.status !== "dispatched" && t.status !== "running"),
-        180_000,
-        3_000,
-      );
-    }
+    // Wait for completion
+    await pollUntil(
+      () => listTasksByIssue(token, wsId, issue.id),
+      (tasks) => tasks.some((t) => t.status !== "queued" && t.status !== "dispatched" && t.status !== "running"),
+      180_000,
+      3_000,
+    );
 
     // Take final screenshot
     await page.screenshot({
@@ -503,6 +502,7 @@ test.describe("Embedded Agent E2E", () => {
       wsId,
       `/api/tasks/${task!.id}/messages`,
     );
+    expect(res.ok).toBe(true);
     const messages = await res.json();
 
     const types = new Set(
