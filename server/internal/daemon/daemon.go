@@ -63,8 +63,6 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 			DaytonaAPIURL:    cfg.DaytonaAPIURL,
 			DefaultModel:     cfg.EmbeddedModel,
 			DefaultMaxTurns:  cfg.EmbeddedMaxTurns,
-			LLMBaseURL:       cfg.LLMBaseURL,
-			LLMAPIKey:        cfg.LLMAPIKey,
 			OpenRouterAPIKey: cfg.OpenRouterAPIKey,
 		}, logger)
 		if err != nil {

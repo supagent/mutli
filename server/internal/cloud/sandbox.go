@@ -16,8 +16,6 @@ import (
 const (
 	defaultModel        = "auto-fastest"
 	defaultMaxTurns     = 25
-	defaultLLMBaseURL   = "http://localhost:7352/v1"
-	defaultLLMAPIKey    = "dummy"
 	defaultTimeout      = 20 * time.Minute
 	defaultImageTimeout = 8 * time.Minute // larger: installs Node.js + ModelRelay + OH
 	ohVersion           = "0.1.6"
