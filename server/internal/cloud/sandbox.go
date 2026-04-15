@@ -231,13 +231,6 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 
 	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Starting research agent (this may take a moment)..."})
 
-	// Diagnostic: verify script exists and oh is available
-	if diag, err := sandbox.Process.ExecuteCommand(runCtx, "cat /tmp/run-agent.sh | head -5 && which oh && echo DIAG_OK"); err == nil {
-		sm.logger.Info("sandbox diagnostic", "task", taskCfg.TaskID, "output", diag.Result, "exit", diag.ExitCode)
-	} else {
-		sm.logger.Warn("sandbox diagnostic failed", "task", taskCfg.TaskID, "error", err)
-	}
-
 	sm.logger.Info("running agent in sandbox", "task", taskCfg.TaskID, "model", model)
 
 	// Execute the entrypoint script via PTY
