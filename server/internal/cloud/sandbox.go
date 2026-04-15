@@ -361,6 +361,7 @@ fi
 
 # --- Phase 4: Run OpenHarness ---
 export OPENAI_API_KEY="$API_KEY"
+export OPENHARNESS_CONFIG_DIR="/etc/multica-agent"
 oh %s --base-url "$BASE_URL" --api-key "$API_KEY" --model "$MODEL" 2>/dev/null
 
 # Cleanup
