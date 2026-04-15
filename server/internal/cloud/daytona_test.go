@@ -76,12 +76,14 @@ func TestDeniedToolsEnforcement(t *testing.T) {
 		return out
 	}
 
-	// Step 1: Upload denied_tools settings.json
+	// Step 1: Upload denied_tools settings.json to BOTH paths (mirrors production sandbox.go)
 	settingsJSON := `{"permission":{"mode":"full_auto","denied_tools":["bash","file_edit","file_read","glob","grep"]}}`
-	t.Log("Uploading settings.json to /etc/multica-agent/settings.json...")
-	if err := sandbox.FileSystem.UploadFile(ctx, []byte(settingsJSON), "/etc/multica-agent/settings.json"); err != nil {
-		t.Fatalf("Upload settings.json failed: %v", err)
+	sandbox.Process.ExecuteCommand(ctx, "mkdir -p /home/daytona/.openharness")
+	t.Log("Uploading settings.json to both config paths...")
+	if err := sandbox.FileSystem.UploadFile(ctx, []byte(settingsJSON), "/home/daytona/.openharness/settings.json"); err != nil {
+		t.Fatalf("Upload to ~/.openharness/ failed: %v", err)
 	}
+	sandbox.FileSystem.UploadFile(ctx, []byte(settingsJSON), "/etc/multica-agent/settings.json")
 
 	// Step 2: Verify the file exists and content is correct
 	content := run("Verify settings.json", "cat /etc/multica-agent/settings.json")

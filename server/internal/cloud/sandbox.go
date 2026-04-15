@@ -141,14 +141,6 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 	if maxTurns == 0 {
 		maxTurns = defaultMaxTurns
 	}
-	baseURL := sm.cfg.LLMBaseURL
-	if baseURL == "" {
-		baseURL = defaultLLMBaseURL
-	}
-	apiKey := sm.cfg.LLMAPIKey
-	if apiKey == "" {
-		apiKey = defaultLLMAPIKey
-	}
 
 	// Create message channel early so we can send lifecycle status updates.
 	msgCh := make(chan agent.Message, 256)

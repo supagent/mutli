@@ -56,7 +56,7 @@ async function apiFetch(
 
 async function listRuntimes(token: string, wsId: string): Promise<Runtime[]> {
   const res = await apiFetch(token, wsId, "/api/runtimes");
-  if (!res.ok) return [];
+  if (!res.ok) throw new Error(`listRuntimes: ${res.status} ${await res.text()}`);
   return res.json();
 }
 
@@ -104,7 +104,7 @@ async function listTasksByIssue(
   issueId: string,
 ): Promise<AgentTask[]> {
   const res = await apiFetch(token, wsId, `/api/issues/${issueId}/task-runs`);
-  if (!res.ok) return [];
+  if (!res.ok) throw new Error(`listTasksByIssue: ${res.status} ${await res.text()}`);
   const data = await res.json();
   return Array.isArray(data) ? data : data.tasks ?? data.runs ?? [];
 }
@@ -160,7 +160,11 @@ test.describe("Embedded Agent E2E", () => {
 
     let runtime: Runtime | undefined;
     for (const ws of workspaces) {
-      runtime = await findEmbeddedRuntime(token, ws.id);
+      try {
+        runtime = await findEmbeddedRuntime(token, ws.id);
+      } catch {
+        continue; // workspace may not have runtimes API access
+      }
       if (runtime) {
         wsId = ws.id;
         break;
@@ -305,7 +309,7 @@ test.describe("Embedded Agent E2E", () => {
 
   // ── 6. Browser: issue page loads for assigned issue ───────────────────────
 
-  test("issue page loads and shows Properties for assigned issue", async ({ page }) => {
+  test("browser smoke: issue page loads for assigned issue (soft check)", async ({ page }) => {
     const agent = await createAgent(token, wsId, `E2E-UI-${Date.now()}`, embeddedRuntime.id);
     createdAgentIds.push(agent.id);
 

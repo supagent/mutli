@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
@@ -124,26 +125,38 @@ func TestLineBuffer_FlushRemaining(t *testing.T) {
 }
 
 func TestLineBuffer_ContextCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
 	msgCh := make(chan agent.Message, 256)
 	dataCh := make(chan []byte, 10)
 
-	// Send one message, then cancel context
+	// Buffer a message BEFORE creating context so it's available on first select
 	dataCh <- []byte("{\"type\": \"assistant_delta\", \"text\": \"Before\"}\n")
-	cancel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately — drainPTYData should still not hang
 
 	var textOutput, toolOutput strings.Builder
-	drainPTYData(ctx, dataCh, msgCh, &textOutput, &toolOutput)
+	done := make(chan struct{})
+	go func() {
+		drainPTYData(ctx, dataCh, msgCh, &textOutput, &toolOutput)
+		close(done)
+	}()
+
+	// Must complete within 2 seconds (proves no infinite hang)
+	select {
+	case <-done:
+		// good
+	case <-time.After(2 * time.Second):
+		t.Fatal("drainPTYData hung after context cancellation")
+	}
 	close(msgCh)
 
 	var msgs []agent.Message
 	for m := range msgCh {
 		msgs = append(msgs, m)
 	}
-
-	// Should have processed at least the first message (it was already buffered)
-	// but should not hang waiting for more data
 	t.Logf("got %d messages after context cancel", len(msgs))
+	// With cancelled context, drainPTYData may or may not process the buffered
+	// message (depends on select ordering). The key assertion is it doesn't hang.
 }
 
 func TestLineBuffer_OutputAccumulation(t *testing.T) {
