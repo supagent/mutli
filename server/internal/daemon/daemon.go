@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/cloud"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/daemon/usage"
@@ -39,12 +40,14 @@ type Daemon struct {
 	cancelFunc    context.CancelFunc // set by Run(); called by triggerRestart
 	restartBinary string             // non-empty after a successful update; path to the new binary
 	updating      atomic.Bool        // prevents concurrent update attempts
+
+	sandboxMgr *cloud.SandboxManager // nil unless DAYTONA_API_KEY is set
 }
 
 // New creates a new Daemon instance.
 func New(cfg Config, logger *slog.Logger) *Daemon {
 	cacheRoot := filepath.Join(cfg.WorkspacesRoot, ".repos")
-	return &Daemon{
+	d := &Daemon{
 		cfg:          cfg,
 		client:       NewClient(cfg.ServerBaseURL),
 		repoCache:    repocache.New(cacheRoot, logger),
@@ -52,6 +55,25 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		workspaces:   make(map[string]*workspaceState),
 		runtimeIndex: make(map[string]Runtime),
 	}
+
+	// Initialize sandbox manager for embedded runtime (if Daytona is configured).
+	if cfg.DaytonaAPIKey != "" {
+		mgr, err := cloud.NewSandboxManager(cloud.SandboxConfig{
+			DaytonaAPIKey:    cfg.DaytonaAPIKey,
+			DaytonaAPIURL:    cfg.DaytonaAPIURL,
+			DefaultModel:     cfg.EmbeddedModel,
+			DefaultMaxTurns:  cfg.EmbeddedMaxTurns,
+			OpenRouterAPIKey: cfg.OpenRouterAPIKey,
+		}, logger)
+		if err != nil {
+			logger.Warn("failed to initialize sandbox manager — embedded runtime disabled", "error", err)
+		} else {
+			d.sandboxMgr = mgr
+			logger.Info("sandbox manager initialized for embedded runtime")
+		}
+	}
+
+	return d
 }
 
 // Run starts the daemon: resolves auth, registers runtimes, then polls for tasks.
@@ -234,6 +256,25 @@ func (d *Daemon) providerToRuntimeMap() map[string]string {
 func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID string) (*RegisterResponse, error) {
 	var runtimes []map[string]string
 	for name, entry := range d.cfg.Agents {
+		// Embedded runtime has no local binary — skip CLI version detection.
+		if name == "embedded" {
+			if d.sandboxMgr == nil {
+				d.logger.Warn("skip registering embedded runtime: sandbox manager not initialized")
+				continue
+			}
+			displayName := "Embedded Agent"
+			if d.cfg.DeviceName != "" {
+				displayName = fmt.Sprintf("Embedded Agent (%s)", d.cfg.DeviceName)
+			}
+			runtimes = append(runtimes, map[string]string{
+				"name":    displayName,
+				"type":    name,
+				"version": "sandbox",
+				"status":  "online",
+			})
+			continue
+		}
+
 		version, err := agent.DetectVersion(ctx, entry.Path)
 		if err != nil {
 			d.logger.Warn("skip registering runtime", "name", name, "error", err)
@@ -479,6 +520,25 @@ func (d *Daemon) handlePing(ctx context.Context, rt Runtime, pingID string) {
 	d.logger.Info("ping requested", "runtime_id", rt.ID, "ping_id", pingID, "provider", rt.Provider)
 
 	start := time.Now()
+
+	// Embedded runtime: report healthy if sandbox manager is initialized.
+	if rt.Provider == "embedded" {
+		status := "completed"
+		errMsg := ""
+		if d.sandboxMgr == nil {
+			status = "failed"
+			errMsg = "sandbox manager not initialized (missing DAYTONA_API_KEY)"
+		}
+		result := map[string]any{
+			"status":      status,
+			"duration_ms": time.Since(start).Milliseconds(),
+		}
+		if errMsg != "" {
+			result["error"] = errMsg
+		}
+		d.client.ReportPingResult(ctx, rt.ID, pingID, result)
+		return
+	}
 
 	entry, ok := d.cfg.Agents[rt.Provider]
 	if !ok {
@@ -887,7 +947,102 @@ func (d *Daemon) handleTask(ctx context.Context, task Task) {
 	}
 }
 
+// buildEmbeddedPrompt constructs a prompt for the embedded agent with the
+// actual issue content included (since the sandbox can't run `multica issue get`).
+func (d *Daemon) buildEmbeddedPrompt(ctx context.Context, task Task) string {
+	// For comment-triggered tasks, use the comment content directly.
+	if task.TriggerCommentContent != "" {
+		return task.TriggerCommentContent
+	}
+	// For chat tasks, use the chat message.
+	if task.ChatMessage != "" {
+		return task.ChatMessage
+	}
+	// For assignment-triggered tasks, fetch issue details from the server.
+	issue, err := d.client.GetIssueDetail(ctx, task.IssueID, task.WorkspaceID)
+	if err != nil {
+		d.logger.Warn("failed to fetch issue details for embedded prompt, using issue ID only", "error", err)
+		return fmt.Sprintf("Research the topic for issue %s. Search the web for relevant information.", task.IssueID)
+	}
+	var prompt strings.Builder
+	prompt.WriteString(issue.Title)
+	if issue.Description != "" {
+		prompt.WriteString("\n\n")
+		prompt.WriteString(issue.Description)
+	}
+	return prompt.String()
+}
+
+func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.Logger) (TaskResult, error) {
+	if d.sandboxMgr == nil {
+		return TaskResult{}, fmt.Errorf("embedded runtime not configured (missing DAYTONA_API_KEY)")
+	}
+
+	// Build prompt with actual issue content (embedded agent can't fetch via CLI).
+	prompt := d.buildEmbeddedPrompt(ctx, task)
+	taskLog.Info("running embedded task in sandbox", "task_id", task.ID)
+
+	backend := &agent.EmbeddedBackend{Executor: d.sandboxMgr}
+	opts := agent.ExecOptions{
+		Model:    d.cfg.EmbeddedModel,
+		MaxTurns: d.cfg.EmbeddedMaxTurns,
+		Timeout:  d.cfg.AgentTimeout,
+	}
+	if task.Agent != nil && task.Agent.Instructions != "" {
+		opts.SystemPrompt = task.Agent.Instructions
+	}
+
+	result, tools, err := d.executeAndDrain(ctx, backend, prompt, opts, taskLog, task.ID)
+	if err != nil {
+		return TaskResult{}, err
+	}
+
+	taskLog.Info("embedded task finished", "status", result.Status, "tools", tools)
+
+	// Convert agent usage map to task usage entries.
+	var usageEntries []TaskUsageEntry
+	for model, u := range result.Usage {
+		if u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 {
+			continue
+		}
+		usageEntries = append(usageEntries, TaskUsageEntry{
+			Provider:         "embedded",
+			Model:            model,
+			InputTokens:      u.InputTokens,
+			OutputTokens:     u.OutputTokens,
+			CacheReadTokens:  u.CacheReadTokens,
+			CacheWriteTokens: u.CacheWriteTokens,
+		})
+	}
+
+	switch result.Status {
+	case "completed":
+		if result.Output == "" {
+			return TaskResult{}, fmt.Errorf("embedded agent returned empty output")
+		}
+		return TaskResult{
+			Status:    "completed",
+			Comment:   result.Output,
+			SessionID: result.SessionID,
+			Usage:     usageEntries,
+		}, nil
+	case "timeout":
+		return TaskResult{}, fmt.Errorf("embedded agent timed out: %s", result.Error)
+	default:
+		errMsg := result.Error
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("embedded agent execution %s", result.Status)
+		}
+		return TaskResult{Status: "blocked", Comment: errMsg, Usage: usageEntries}, nil
+	}
+}
+
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, taskLog *slog.Logger) (TaskResult, error) {
+	// Embedded runtime: delegate to Daytona sandbox, bypass local CLI pipeline.
+	if provider == "embedded" {
+		return d.runEmbeddedTask(ctx, task, taskLog)
+	}
+
 	entry, ok := d.cfg.Agents[provider]
 	if !ok {
 		return TaskResult{}, fmt.Errorf("no agent configured for provider %q", provider)

@@ -204,6 +204,27 @@ type IssueGCStatus struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// IssueDetail holds issue fields needed for embedded agent prompts.
+type IssueDetail struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	Priority    string `json:"priority"`
+}
+
+// GetIssueDetail fetches issue title and description for embedded agent prompts.
+// Requires workspaceID because the issues API is workspace-scoped.
+func (c *Client) GetIssueDetail(ctx context.Context, issueID, workspaceID string) (*IssueDetail, error) {
+	var resp IssueDetail
+	if err := c.getJSONWithHeaders(ctx, fmt.Sprintf("/api/issues/%s", issueID), &resp, map[string]string{
+		"X-Workspace-ID": workspaceID,
+	}); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // GetIssueGCCheck returns the status and updated_at of an issue for GC decisions.
 func (c *Client) GetIssueGCCheck(ctx context.Context, issueID string) (*IssueGCStatus, error) {
 	var resp IssueGCStatus
@@ -270,6 +291,10 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBod
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, respBody any) error {
+	return c.getJSONWithHeaders(ctx, path, respBody, nil)
+}
+
+func (c *Client) getJSONWithHeaders(ctx context.Context, path string, respBody any, headers map[string]string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return err
@@ -277,13 +302,14 @@ func (c *Client) getJSON(ctx context.Context, path string, respBody any) error {
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}

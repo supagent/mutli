@@ -33,7 +33,12 @@ type Config struct {
 	RuntimeName        string
 	CLIVersion         string                // multica CLI version (e.g. "0.1.13")
 	Profile            string                // profile name (empty = default)
-	Agents             map[string]AgentEntry // "claude" -> entry, "codex" -> entry, "opencode" -> entry, "openclaw" -> entry, "hermes" -> entry
+	Agents             map[string]AgentEntry // "claude" -> entry, "codex" -> entry, ..., "embedded" -> entry
+	DaytonaAPIKey      string                // Daytona API key for embedded sandbox runtime
+	DaytonaAPIURL      string                // Optional: custom Daytona API URL
+	EmbeddedModel      string                // Default model for embedded agent
+	EmbeddedMaxTurns   int                   // Default max turns for embedded agent
+	OpenRouterAPIKey   string                // Fallback: OpenRouter key for free models
 	WorkspacesRoot     string                // base path for execution envs (default: ~/multica_workspaces)
 	KeepEnvAfterTask   bool                  // preserve env after task for debugging
 	HealthPort         int                   // local HTTP port for health checks (default: 19514)
@@ -120,8 +125,15 @@ func LoadConfig(overrides Overrides) (Config, error) {
 			Model: envOrDefault("MULTICA_OH_MODEL", "auto-fastest"),
 		}
 	}
+	daytonaKey := strings.TrimSpace(os.Getenv("DAYTONA_API_KEY"))
+	if daytonaKey != "" {
+		agents["embedded"] = AgentEntry{
+			Path:  "", // no local binary — runs in Daytona sandbox
+			Model: envOrDefault("MULTICA_EMBEDDED_MODEL", "auto-fastest"),
+		}
+	}
 	if len(agents) == 0 {
-		return Config{}, fmt.Errorf("no agent CLI found: install claude, codex, opencode, openclaw, hermes, or oh and ensure it is on PATH")
+		return Config{}, fmt.Errorf("no agent CLI found: install claude, codex, opencode, openclaw, hermes, or oh, or configure DAYTONA_API_KEY for embedded runtime")
 	}
 
 	// Host info
@@ -235,6 +247,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 
+	embeddedMaxTurns, err := intFromEnv("MULTICA_EMBEDDED_MAX_TURNS", 25)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		ServerBaseURL:      serverBaseURL,
 		DaemonID:           daemonID,
@@ -242,6 +259,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		RuntimeName:        runtimeName,
 		Profile:            profile,
 		Agents:             agents,
+		DaytonaAPIKey:      daytonaKey,
+		DaytonaAPIURL:      strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
+		EmbeddedModel:      envOrDefault("MULTICA_EMBEDDED_MODEL", "auto-fastest"),
+		EmbeddedMaxTurns:   embeddedMaxTurns,
+		OpenRouterAPIKey:   strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")),
 		WorkspacesRoot:     workspacesRoot,
 		KeepEnvAfterTask:   keepEnv,
 		GCEnabled:          gcEnabled,
