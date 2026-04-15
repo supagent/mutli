@@ -63,7 +63,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 			DaytonaAPIURL:    cfg.DaytonaAPIURL,
 			DefaultModel:     cfg.EmbeddedModel,
 			DefaultMaxTurns:  cfg.EmbeddedMaxTurns,
-			OpenRouterAPIKey: cfg.OpenRouterAPIKey,
+			FallbackAPIKey:   cfg.FallbackAPIKey,
 		}, logger)
 		if err != nil {
 			logger.Warn("failed to initialize sandbox manager — embedded runtime disabled", "error", err)

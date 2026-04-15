@@ -18,9 +18,9 @@ import (
 
 func TestOpenHarnessEndToEnd(t *testing.T) {
 	daytonaKey := os.Getenv("DAYTONA_API_KEY")
-	openrouterKey := os.Getenv("OPENROUTER_API_KEY")
-	if daytonaKey == "" || openrouterKey == "" {
-		t.Skip("DAYTONA_API_KEY and OPENROUTER_API_KEY required; skipping")
+	fallbackKey := os.Getenv("GOOGLE_AI_API_KEY")
+	if daytonaKey == "" || fallbackKey == "" {
+		t.Skip("DAYTONA_API_KEY and GOOGLE_AI_API_KEY required; skipping")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -52,7 +52,7 @@ func TestOpenHarnessEndToEnd(t *testing.T) {
 	sandbox, err := client.Create(ctx, types.ImageParams{
 		SandboxBaseParams: types.SandboxBaseParams{
 			EnvVars: map[string]string{
-				"OPENAI_API_KEY": openrouterKey,
+				"OPENAI_API_KEY": fallbackKey,
 				"TERM":           "dumb",
 			},
 		},

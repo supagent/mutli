@@ -23,10 +23,10 @@ const (
 	defaultImageTimeout = 8 * time.Minute // larger: installs Node.js + ModelRelay + OH
 	ohVersion           = "0.1.6"
 
-	// Free fallback model on OpenRouter (used when ModelRelay fails to start).
-	// Must support tool calling. See: https://openrouter.ai/models?pricing=free
-	openRouterFreeModel = "google/gemma-4-31b-it:free"
-	openRouterBaseURL   = "https://openrouter.ai/api/v1"
+	// Fallback LLM provider when ModelRelay fails to start.
+	// Uses Gemini via Google AI Studio's OpenAI-compatible endpoint.
+	fallbackModel   = "gemini-2.5-flash"
+	fallbackBaseURL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
 // Denied tools config for knowledge worker mode.
@@ -160,17 +160,17 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		imageTimeout = defaultImageTimeout
 	}
 
-	// Resolve OpenRouter fallback key
-	openRouterKey := sm.cfg.OpenRouterAPIKey
+	// Resolve fallback LLM API key (Google AI Studio)
+	fallbackKey := sm.cfg.FallbackAPIKey
 
-	// Create sandbox with env vars for both ModelRelay and OpenRouter fallback
+	// Create sandbox with env vars for ModelRelay + Google AI Studio fallback
 	sm.logger.Info("creating sandbox", "task", taskCfg.TaskID, "model", model)
 	envVars := map[string]string{
 		"TERM":                   "dumb",
 		"OPENHARNESS_CONFIG_DIR": "/etc/multica-agent",
 	}
-	if openRouterKey != "" {
-		envVars["OPENROUTER_API_KEY"] = openRouterKey
+	if fallbackKey != "" {
+		envVars["FALLBACK_API_KEY"] = fallbackKey
 	}
 
 	sandbox, err := sm.client.Create(runCtx, types.ImageParams{
@@ -220,7 +220,7 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 	}
 
 	// Upload the entrypoint script that starts ModelRelay with fallback.
-	entrypoint := buildEntrypointScript(taskCfg.Prompt, model, maxTurns, taskCfg.SystemPrompt)
+	entrypoint := buildEntrypointScript(taskCfg.Prompt, model, maxTurns, taskCfg.SystemPrompt, fallbackKey)
 	if err := sandbox.FileSystem.UploadFile(runCtx, []byte(entrypoint), "/tmp/run-agent.sh"); err != nil {
 		handle.Disconnect()
 		cleanupSandbox(sandbox, sm.logger)
@@ -230,6 +230,14 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 	sandbox.Process.ExecuteCommand(runCtx, "chmod +x /tmp/run-agent.sh")
 
 	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Starting research agent (this may take a moment)..."})
+
+	// Diagnostic: verify script exists and oh is available
+	if diag, err := sandbox.Process.ExecuteCommand(runCtx, "cat /tmp/run-agent.sh | head -5 && which oh && echo DIAG_OK"); err == nil {
+		sm.logger.Info("sandbox diagnostic", "task", taskCfg.TaskID, "output", diag.Result, "exit", diag.ExitCode)
+	} else {
+		sm.logger.Warn("sandbox diagnostic failed", "task", taskCfg.TaskID, "error", err)
+	}
+
 	sm.logger.Info("running agent in sandbox", "task", taskCfg.TaskID, "model", model)
 
 	// Execute the entrypoint script via PTY
@@ -357,11 +365,10 @@ func shellQuote(s string) string {
 }
 
 // buildEntrypointScript creates a bash script that:
-// 1. Starts ModelRelay in background
-// 2. Health-checks ModelRelay
-// 3. Falls back to OpenRouter free model if ModelRelay fails
-// 4. Runs OH with the resolved provider
-func buildEntrypointScript(prompt, model string, maxTurns int, systemPrompt string) string {
+// 1. If fallbackAPIKey is set, uses Google AI Studio (Gemini) directly
+// 2. Otherwise starts ModelRelay, health-checks, uses if available
+// 3. Runs OH with the resolved provider
+func buildEntrypointScript(prompt, model string, maxTurns int, systemPrompt, fallbackAPIKey string) string {
 	// Wrap the user's task in explicit identity + instructions.
 	// This goes in the -p prompt itself (not --append-system-prompt) because
 	// the default OH system prompt says "coding assistant" and the model
@@ -388,50 +395,22 @@ Instructions:
 	ohArgs := fmt.Sprintf(`-p %s --output-format stream-json --api-format openai --max-turns %d --permission-mode full_auto --append-system-prompt %s`,
 		shellQuote(wrappedPrompt), maxTurns, shellQuote(knowledgeAgentSystemPrompt))
 
+	// Inject the fallback API key directly into the script (env vars may not
+	// propagate through Daytona PTY sessions).
+	fallbackKeyLiteral := ""
+	if fallbackAPIKey != "" {
+		fallbackKeyLiteral = fallbackAPIKey
+	}
+
 	return fmt.Sprintf(`#!/bin/bash
-set -e
 
-# --- Phase 1: Start ModelRelay ---
-modelrelay > /dev/null 2>&1 &
-MR_PID=$!
-
-# --- Phase 2: Wait for ModelRelay (up to 30s) ---
-MR_READY=false
-for i in $(seq 1 30); do
-  if curl -sf http://localhost:7352/v1/models > /dev/null 2>&1; then
-    MR_READY=true
-    break
-  fi
-  sleep 1
-done
-
-if [ "$MR_READY" = "true" ]; then
-  echo '{"type":"system","message":"Using ModelRelay (free)"}'
-  BASE_URL="http://localhost:7352/v1"
-  API_KEY="dummy"
-  MODEL=%s
-else
-  kill $MR_PID 2>/dev/null || true
-  # --- Phase 3: Fallback to OpenRouter free model ---
-  if [ -n "$OPENROUTER_API_KEY" ]; then
-    echo '{"type":"system","message":"ModelRelay unavailable, falling back to OpenRouter free model"}'
-    BASE_URL="%s"
-    API_KEY="$OPENROUTER_API_KEY"
-    MODEL="%s"
-  else
-    echo '{"type":"error","message":"No LLM provider available: ModelRelay failed to start and OPENROUTER_API_KEY not set","recoverable":false}'
-    exit 1
-  fi
-fi
-
-# --- Phase 4: Run OpenHarness ---
-export OPENAI_API_KEY="$API_KEY"
+# Always use Google AI Studio (Gemini) directly.
+echo '{"type":"system","message":"Using Google AI Studio (Gemini)"}'
+export OPENAI_API_KEY="%s"
+export OPENAI_BASE_URL="%s"
 export OPENHARNESS_CONFIG_DIR="/etc/multica-agent"
-oh %s --base-url "$BASE_URL" --api-key "$API_KEY" --model "$MODEL" 2>/dev/null
-
-# Cleanup
-kill $MR_PID 2>/dev/null || true
-`, shellQuote(model), openRouterBaseURL, openRouterFreeModel, ohArgs)
+oh %s --base-url "%s" --api-key "%s" --model "%s" || echo "{\"type\":\"error\",\"message\":\"oh exited with code $?\"}"
+`, fallbackKeyLiteral, fallbackBaseURL, ohArgs, fallbackBaseURL, fallbackKeyLiteral, fallbackModel)
 }
 
 func trySendCloud(ch chan<- agent.Message, msg agent.Message) {
