@@ -278,6 +278,13 @@ func TestBuildEntrypointScript_ContainsGemini(t *testing.T) {
 	if !strings.Contains(script, "MUST call write_file") {
 		t.Error("entrypoint script should contain write_file compliance instruction")
 	}
+	// Verify search proxy is started
+	if !strings.Contains(script, "search-proxy.py") {
+		t.Error("entrypoint script should start the search proxy")
+	}
+	if !strings.Contains(script, "127.0.0.1:8888") {
+		t.Error("entrypoint script should reference search proxy URL")
+	}
 }
 
 func TestBuildEntrypointScript_NoAPIKey(t *testing.T) {
