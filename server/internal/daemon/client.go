@@ -291,29 +291,7 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBod
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, respBody any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
-	}
-	if respBody == nil {
-		io.Copy(io.Discard, resp.Body)
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(respBody)
+	return c.getJSONWithHeaders(ctx, path, respBody, nil)
 }
 
 func (c *Client) getJSONWithHeaders(ctx context.Context, path string, respBody any, headers map[string]string) error {

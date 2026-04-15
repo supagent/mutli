@@ -205,7 +205,7 @@ build:
 ## Build and install multica CLI to ~/.local/bin (use after code changes)
 install: build
 	@cp server/bin/multica ~/.local/bin/multica
-	@echo "✓ Installed multica $(VERSION) to ~/.local/bin/multica"
+	@echo "Installed multica $(VERSION) to ~/.local/bin/multica"
 
 test:
 	$(REQUIRE_ENV)

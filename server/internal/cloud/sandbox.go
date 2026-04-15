@@ -234,6 +234,7 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		handle.Disconnect()
 		cleanupSandbox(sandbox, sm.logger)
 		cancel()
+		close(msgCh)
 		return nil, fmt.Errorf("write to pty: %w", err)
 	}
 
@@ -427,6 +428,8 @@ func trySendCloud(ch chan<- agent.Message, msg agent.Message) {
 	select {
 	case ch <- msg:
 	default:
+		// Channel full — message dropped. This shouldn't happen with 256 buffer
+		// unless the consumer is very slow.
 	}
 }
 
