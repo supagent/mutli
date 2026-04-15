@@ -12,8 +12,109 @@ import (
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/options"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 )
+
+// TestModelRelayInSandbox diagnoses why ModelRelay may not work inside a Daytona sandbox.
+// Checks: binary on PATH, Node version, npm install, startup, network egress.
+func TestModelRelayInSandbox(t *testing.T) {
+	apiKey := os.Getenv("DAYTONA_API_KEY")
+	if apiKey == "" {
+		t.Skip("DAYTONA_API_KEY not set; skipping integration test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	client, err := daytona.NewClientWithConfig(&types.DaytonaConfig{APIKey: apiKey})
+	if err != nil {
+		t.Fatalf("NewClientWithConfig: %v", err)
+	}
+	defer client.Close(ctx)
+
+	// Build the same image as sandbox.go
+	image := daytona.DebianSlim(nil).
+		AptGet([]string{"nodejs", "npm", "curl"}).
+		Run("npm install -g modelrelay").
+		PipInstall([]string{"openharness-ai==0.1.6"}).
+		Env("TERM", "dumb")
+
+	logChan := make(chan string, 200)
+	go func() {
+		for line := range logChan {
+			t.Logf("[build] %s", line)
+		}
+	}()
+
+	t.Log("Creating sandbox with ModelRelay image (may take several minutes on first build)...")
+	sandbox, err := client.Create(ctx, types.ImageParams{
+		SandboxBaseParams: types.SandboxBaseParams{
+			EnvVars: map[string]string{"TERM": "dumb"},
+		},
+		Image: image,
+	}, options.WithTimeout(8*time.Minute), options.WithLogChannel(logChan))
+	if err != nil {
+		t.Fatalf("Create sandbox: %v", err)
+	}
+	t.Logf("Sandbox created: id=%s", sandbox.ID)
+
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cleanupCancel()
+		if err := sandbox.Delete(cleanupCtx); err != nil {
+			t.Logf("WARNING: failed to delete sandbox: %v", err)
+		} else {
+			t.Log("Sandbox deleted")
+		}
+	})
+
+	run := func(label, cmd string) string {
+		t.Logf("--- %s ---", label)
+		result, err := sandbox.Process.ExecuteCommand(ctx, cmd)
+		if err != nil {
+			t.Logf("  ERROR: %v", err)
+			return ""
+		}
+		t.Logf("  exit=%d output=%q", result.ExitCode, strings.TrimSpace(result.Result))
+		return strings.TrimSpace(result.Result)
+	}
+
+	// Check 1: Node.js version
+	nodeVer := run("Node.js version", "node --version")
+	if nodeVer == "" {
+		t.Error("DIAGNOSIS: Node.js not installed")
+	} else {
+		t.Logf("  → Node %s installed", nodeVer)
+	}
+
+	// Check 2: npm version
+	run("npm version", "npm --version")
+
+	// Check 3: Is modelrelay binary installed?
+	whichMR := run("which modelrelay", "which modelrelay 2>/dev/null || echo 'NOT_ON_PATH'")
+	if strings.Contains(whichMR, "NOT_ON_PATH") {
+		t.Error("DIAGNOSIS: modelrelay not on PATH")
+		// Check where npm puts global bins
+		run("npm global bin", "npm bin -g")
+		run("ls npm global", "ls -la $(npm bin -g)/modelrelay 2>/dev/null || echo 'NOT_FOUND'")
+		run("find modelrelay", "find / -name modelrelay -type f 2>/dev/null | head -5")
+	}
+
+	// Check 4: Can modelrelay start?
+	run("modelrelay startup test", "timeout 15 modelrelay 2>&1 &\nsleep 5\ncurl -sf http://localhost:7352/v1/models 2>&1 | head -100 || echo 'HEALTH_CHECK_FAILED'\nkill %1 2>/dev/null")
+
+	// Check 5: Network egress to free providers
+	run("network: Groq", "curl -sf -o /dev/null -w '%{http_code}' https://api.groq.com/ 2>&1 || echo 'BLOCKED'")
+	run("network: OpenRouter", "curl -sf -o /dev/null -w '%{http_code}' https://openrouter.ai/api/v1/models 2>&1 || echo 'BLOCKED'")
+	run("network: Google", "curl -sf -o /dev/null -w '%{http_code}' https://www.google.com 2>&1 || echo 'BLOCKED'")
+
+	// Check 6: PATH in the sandbox
+	run("PATH", "echo $PATH")
+
+	// Check 7: oh version (verify OH is installed too)
+	run("oh version", "oh --version 2>&1")
+}
 
 func TestDaytonaSandboxRoundtrip(t *testing.T) {
 	apiKey := os.Getenv("DAYTONA_API_KEY")
