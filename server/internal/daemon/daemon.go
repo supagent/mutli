@@ -949,12 +949,39 @@ func (d *Daemon) handleTask(ctx context.Context, task Task) {
 	}
 }
 
+// buildEmbeddedPrompt constructs a prompt for the embedded agent with the
+// actual issue content included (since the sandbox can't run `multica issue get`).
+func (d *Daemon) buildEmbeddedPrompt(ctx context.Context, task Task) string {
+	// For comment-triggered tasks, use the comment content directly.
+	if task.TriggerCommentContent != "" {
+		return task.TriggerCommentContent
+	}
+	// For chat tasks, use the chat message.
+	if task.ChatMessage != "" {
+		return task.ChatMessage
+	}
+	// For assignment-triggered tasks, fetch issue details from the server.
+	issue, err := d.client.GetIssueDetail(ctx, task.IssueID)
+	if err != nil {
+		d.logger.Warn("failed to fetch issue details for embedded prompt, using issue ID only", "error", err)
+		return fmt.Sprintf("Research the topic for issue %s. Search the web for relevant information.", task.IssueID)
+	}
+	var prompt strings.Builder
+	prompt.WriteString(issue.Title)
+	if issue.Description != "" {
+		prompt.WriteString("\n\n")
+		prompt.WriteString(issue.Description)
+	}
+	return prompt.String()
+}
+
 func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.Logger) (TaskResult, error) {
 	if d.sandboxMgr == nil {
 		return TaskResult{}, fmt.Errorf("embedded runtime not configured (missing DAYTONA_API_KEY)")
 	}
 
-	prompt := BuildPrompt(task)
+	// Build prompt with actual issue content (embedded agent can't fetch via CLI).
+	prompt := d.buildEmbeddedPrompt(ctx, task)
 	taskLog.Info("running embedded task in sandbox", "task_id", task.ID)
 
 	backend := &agent.EmbeddedBackend{Executor: d.sandboxMgr}

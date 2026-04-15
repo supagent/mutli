@@ -204,6 +204,24 @@ type IssueGCStatus struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// IssueDetail holds issue fields needed for embedded agent prompts.
+type IssueDetail struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	Priority    string `json:"priority"`
+}
+
+// GetIssueDetail fetches issue title and description for embedded agent prompts.
+func (c *Client) GetIssueDetail(ctx context.Context, issueID string) (*IssueDetail, error) {
+	var resp IssueDetail
+	if err := c.getJSON(ctx, fmt.Sprintf("/api/issues/%s", issueID), &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // GetIssueGCCheck returns the status and updated_at of an issue for GC decisions.
 func (c *Client) GetIssueGCCheck(ctx context.Context, issueID string) (*IssueGCStatus, error) {
 	var resp IssueGCStatus
