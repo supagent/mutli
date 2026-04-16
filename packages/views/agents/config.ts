@@ -3,6 +3,7 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
+  MinusCircle,
   Loader2,
   Play,
 } from "lucide-react";
@@ -21,5 +22,5 @@ export const taskStatusConfig: Record<string, { label: string; icon: typeof Chec
   running: { label: "Running", icon: Loader2, color: "text-success" },
   completed: { label: "Completed", icon: CheckCircle2, color: "text-success" },
   failed: { label: "Failed", icon: XCircle, color: "text-destructive" },
-  cancelled: { label: "Cancelled", icon: XCircle, color: "text-muted-foreground" },
+  cancelled: { label: "Cancelled", icon: MinusCircle, color: "text-muted-foreground" },
 };

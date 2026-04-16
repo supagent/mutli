@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
@@ -414,6 +415,24 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		return nil, fmt.Errorf("write to pty: %w", err)
 	}
 
+	// Stop sandbox on external cancellation (user cancel or timeout), but NOT on
+	// normal completion. The drain goroutine sets normalExit before cleanup so we
+	// skip the redundant Stop on already-deleted sandboxes.
+	var normalExit atomic.Bool
+	go func() {
+		<-runCtx.Done()
+		if normalExit.Load() {
+			return
+		}
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stopCancel()
+		if err := sandbox.Stop(stopCtx); err != nil {
+			sm.logger.Warn("sandbox stop on cancel failed", "task", taskCfg.TaskID, "error", err)
+		} else {
+			sm.logger.Info("sandbox stopped on cancellation", "task", taskCfg.TaskID)
+		}
+	}()
+
 	// Result channel (msgCh already created above for lifecycle messages).
 	resCh := make(chan agent.Result, 1)
 
@@ -452,6 +471,9 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		sm.logger.Info("sandbox task finished", "task", taskCfg.TaskID, "status", finalStatus,
 			"duration", duration.Round(time.Millisecond),
 			"textLen", textOutput.Len(), "toolOutputLen", toolOutput.Len())
+
+		// Signal normal completion so the Stop goroutine doesn't fire on cleanup.
+		normalExit.Store(true)
 
 		// Extract artifacts from /workspace/output/ before destroying the sandbox.
 		var artifacts []agent.Artifact
@@ -516,37 +538,62 @@ func drainPTYData(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.
 		trySendCloud(msgCh, msg)
 	}
 
+	// processChunk parses complete lines from the buffer and dispatches messages.
+	processChunk := func(data []byte, lineBuf *strings.Builder) {
+		lineBuf.Write(data)
+		for {
+			full := lineBuf.String()
+			idx := strings.Index(full, "\n")
+			if idx < 0 {
+				break
+			}
+			line := full[:idx]
+			lineBuf.Reset()
+			lineBuf.WriteString(full[idx+1:])
+			if msg, ok := ParseOHLine(line); ok {
+				processMsg(msg)
+			} else if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "$") && !strings.HasPrefix(trimmed, "daytona@") {
+				slog.Warn("sandbox non-json output", "line", trimmed)
+			}
+		}
+	}
+
+	flushLineBuf := func(lineBuf *strings.Builder) {
+		if remaining := strings.TrimSpace(lineBuf.String()); remaining != "" {
+			if msg, ok := ParseOHLine(remaining); ok {
+				processMsg(msg)
+			}
+		}
+	}
+
 	var lineBuf strings.Builder
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			// Context cancelled (user cancel or timeout). Drain any remaining
+			// buffered data from the channel — sandbox.Stop() closes DataChan
+			// asynchronously, so we wait briefly for late-arriving chunks rather
+			// than returning immediately on an empty channel.
+			drainTimeout := time.After(2 * time.Second)
+			for {
+				select {
+				case data, ok := <-dataCh:
+					if !ok {
+						flushLineBuf(&lineBuf)
+						return
+					}
+					processChunk(data, &lineBuf)
+				case <-drainTimeout:
+					flushLineBuf(&lineBuf)
+					return
+				}
+			}
 		case data, ok := <-dataCh:
 			if !ok {
-				if remaining := strings.TrimSpace(lineBuf.String()); remaining != "" {
-					if msg, ok := ParseOHLine(remaining); ok {
-						processMsg(msg)
-					}
-				}
+				flushLineBuf(&lineBuf)
 				return
 			}
-			lineBuf.Write(data)
-			for {
-				full := lineBuf.String()
-				idx := strings.Index(full, "\n")
-				if idx < 0 {
-					break
-				}
-				line := full[:idx]
-				lineBuf.Reset()
-				lineBuf.WriteString(full[idx+1:])
-				if msg, ok := ParseOHLine(line); ok {
-					processMsg(msg)
-				} else if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "$") && !strings.HasPrefix(trimmed, "daytona@") {
-					// Log non-JSON lines (Python tracebacks, errors, etc.)
-					slog.Warn("sandbox non-json output", "line", trimmed)
-				}
-			}
+			processChunk(data, &lineBuf)
 		}
 	}
 }

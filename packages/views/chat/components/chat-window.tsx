@@ -151,11 +151,18 @@ export function ChatWindow() {
       finalizePending(false);
     });
 
+    const unsubCancelled = subscribe("task:cancelled", (payload) => {
+      const p = payload as { task_id: string };
+      if (!matchesPending(p.task_id)) return;
+      finalizePending(true);
+    });
+
     return () => {
       unsubMessage();
       unsubDone();
       unsubCompleted();
       unsubFailed();
+      unsubCancelled();
     };
   }, [subscribe, addTimelineItem, clearTimeline, setPendingTask, qc]);
 
