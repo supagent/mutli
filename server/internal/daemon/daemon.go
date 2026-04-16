@@ -867,10 +867,10 @@ func (d *Daemon) handleTask(ctx context.Context, task Task) {
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 
-	// Poll for cancellation every 5 seconds while the task is running.
+	// Poll for cancellation every 2 seconds while the task is running.
 	cancelledByPoll := make(chan struct{})
 	go func() {
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {

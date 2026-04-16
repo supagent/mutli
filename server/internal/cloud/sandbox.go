@@ -414,6 +414,20 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		return nil, fmt.Errorf("write to pty: %w", err)
 	}
 
+	// Stop sandbox immediately on context cancellation (user cancel or timeout).
+	// This halts the OH process, closes the PTY DataChan, and stops LLM token burn.
+	// sandbox.Stop() is idempotent; safe if the sandbox already finished or is being deleted.
+	go func() {
+		<-runCtx.Done()
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stopCancel()
+		if err := sandbox.Stop(stopCtx); err != nil {
+			sm.logger.Warn("sandbox stop on cancel failed", "task", taskCfg.TaskID, "error", err)
+		} else {
+			sm.logger.Info("sandbox stopped on cancellation", "task", taskCfg.TaskID)
+		}
+	}()
+
 	// Result channel (msgCh already created above for lifecycle messages).
 	resCh := make(chan agent.Result, 1)
 
@@ -520,7 +534,44 @@ func drainPTYData(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			// Context cancelled (user cancel or timeout). Drain any remaining
+			// buffered data from the channel before returning — sandbox.Stop()
+			// closes DataChan, so these reads are bounded.
+			for {
+				select {
+				case data, ok := <-dataCh:
+					if !ok {
+						if remaining := strings.TrimSpace(lineBuf.String()); remaining != "" {
+							if msg, ok := ParseOHLine(remaining); ok {
+								processMsg(msg)
+							}
+						}
+						return
+					}
+					lineBuf.Write(data)
+					for {
+						full := lineBuf.String()
+						idx := strings.Index(full, "\n")
+						if idx < 0 {
+							break
+						}
+						line := full[:idx]
+						lineBuf.Reset()
+						lineBuf.WriteString(full[idx+1:])
+						if msg, ok := ParseOHLine(line); ok {
+							processMsg(msg)
+						}
+					}
+				default:
+					// No more buffered data — flush lineBuf and return.
+					if remaining := strings.TrimSpace(lineBuf.String()); remaining != "" {
+						if msg, ok := ParseOHLine(remaining); ok {
+							processMsg(msg)
+						}
+					}
+					return
+				}
+			}
 		case data, ok := <-dataCh:
 			if !ok {
 				if remaining := strings.TrimSpace(lineBuf.String()); remaining != "" {

@@ -198,6 +198,53 @@ func TestLineBuffer_ToolOutputFallback(t *testing.T) {
 	}
 }
 
+// TV3: Verify drainPTYData recovers buffered messages after context cancellation.
+// When sandbox.Stop() closes DataChan and the context is cancelled, we must
+// still drain remaining buffered data before returning.
+func TestLineBuffer_DrainAfterCancel(t *testing.T) {
+	msgCh := make(chan agent.Message, 256)
+	dataCh := make(chan []byte, 10)
+
+	// Buffer 3 complete messages before cancel
+	dataCh <- []byte("{\"type\": \"assistant_delta\", \"text\": \"One\"}\n")
+	dataCh <- []byte("{\"type\": \"assistant_delta\", \"text\": \"Two\"}\n")
+	dataCh <- []byte("{\"type\": \"assistant_delta\", \"text\": \"Three\"}\n")
+	close(dataCh) // simulate sandbox.Stop() closing the PTY DataChan
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel context — simulates daemon cancel-poll
+
+	var textOutput, toolOutput strings.Builder
+	done := make(chan struct{})
+	go func() {
+		drainPTYData(ctx, dataCh, msgCh, &textOutput, &toolOutput)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("drainPTYData hung after context cancellation")
+	}
+	close(msgCh)
+
+	var msgs []agent.Message
+	for m := range msgCh {
+		msgs = append(msgs, m)
+	}
+
+	// All 3 buffered messages must be recovered even with cancelled context
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages from buffer drain, got %d", len(msgs))
+	}
+	if msgs[0].Content != "One" || msgs[1].Content != "Two" || msgs[2].Content != "Three" {
+		t.Errorf("unexpected messages: %+v", msgs)
+	}
+	if textOutput.String() != "OneTwoThree" {
+		t.Errorf("expected text output 'OneTwoThree', got %q", textOutput.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // detectContentType tests
 // ---------------------------------------------------------------------------

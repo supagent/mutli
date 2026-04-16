@@ -148,6 +148,18 @@ func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UU
 func (s *TaskService) CancelTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
 	task, err := s.Queries.CancelAgentTask(ctx, taskID)
 	if err != nil {
+		// Task is already in a terminal state (completed, failed, or already cancelled).
+		// Return it as-is — cancelling a finished task is a no-op per acceptance criteria.
+		// Still broadcast task:cancelled so the frontend clears any stale live card.
+		if errors.Is(err, pgx.ErrNoRows) {
+			existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID)
+			if lookupErr != nil {
+				return nil, fmt.Errorf("cancel task: task not found")
+			}
+			slog.Info("cancel task: already in terminal state", "task_id", util.UUIDToString(taskID), "status", existing.Status)
+			s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, existing)
+			return &existing, nil
+		}
 		return nil, fmt.Errorf("cancel task: %w", err)
 	}
 
@@ -156,7 +168,7 @@ func (s *TaskService) CancelTask(ctx context.Context, taskID pgtype.UUID) (*db.A
 	// Reconcile agent status
 	s.ReconcileAgentStatus(ctx, task.AgentID)
 
-	// Broadcast cancellation as a task:failed event so frontends clear the live card
+	// Broadcast cancellation so frontends clear the live card
 	s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
 
 	return &task, nil

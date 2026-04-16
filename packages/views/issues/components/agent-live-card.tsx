@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Bot, ChevronRight, ChevronDown, Loader2, ArrowDown, Brain, AlertCircle, Clock, CheckCircle2, XCircle, Square, Maximize2 } from "lucide-react";
+import { Bot, ChevronRight, ChevronDown, Loader2, ArrowDown, Brain, AlertCircle, Clock, CheckCircle2, XCircle, MinusCircle, Square, Maximize2 } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWSEvent } from "@multica/core/realtime";
 import type { TaskMessagePayload, TaskCompletedPayload, TaskFailedPayload, TaskCancelledPayload } from "@multica/core/types/events";
@@ -312,9 +312,15 @@ function SingleAgentLiveCard({ task, items, issueId, agentName }: SingleAgentLiv
   const handleCancel = useCallback(async () => {
     if (cancelling) return;
     setCancelling(true);
+    const timeoutId = setTimeout(() => {
+      setCancelling(false);
+      toast.error("Cancel timed out — try again");
+    }, 10_000);
     try {
       await api.cancelTask(issueId, task.id);
+      clearTimeout(timeoutId);
     } catch (e) {
+      clearTimeout(timeoutId);
       toast.error(e instanceof Error ? e.message : "Failed to cancel task");
       setCancelling(false);
     }
@@ -525,6 +531,8 @@ function TaskRunEntry({ task }: { task: AgentTask }) {
         <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
         {task.status === "completed" ? (
           <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
+        ) : task.status === "cancelled" ? (
+          <MinusCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         ) : (
           <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
         )}
@@ -532,7 +540,7 @@ function TaskRunEntry({ task }: { task: AgentTask }) {
           {new Date(task.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
         </span>
         {duration && <span className="text-muted-foreground">{duration}</span>}
-        <span className={cn("ml-auto capitalize", task.status === "completed" ? "text-success" : "text-destructive")}>
+        <span className={cn("ml-auto capitalize", task.status === "completed" ? "text-success" : task.status === "cancelled" ? "text-muted-foreground" : "text-destructive")}>
           {task.status}
         </span>
         <span
