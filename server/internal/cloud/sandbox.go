@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
@@ -414,11 +415,15 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		return nil, fmt.Errorf("write to pty: %w", err)
 	}
 
-	// Stop sandbox immediately on context cancellation (user cancel or timeout).
-	// This halts the OH process, closes the PTY DataChan, and stops LLM token burn.
-	// sandbox.Stop() is idempotent; safe if the sandbox already finished or is being deleted.
+	// Stop sandbox on external cancellation (user cancel or timeout), but NOT on
+	// normal completion. The drain goroutine sets normalExit before cleanup so we
+	// skip the redundant Stop on already-deleted sandboxes.
+	var normalExit atomic.Bool
 	go func() {
 		<-runCtx.Done()
+		if normalExit.Load() {
+			return
+		}
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stopCancel()
 		if err := sandbox.Stop(stopCtx); err != nil {
@@ -466,6 +471,9 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		sm.logger.Info("sandbox task finished", "task", taskCfg.TaskID, "status", finalStatus,
 			"duration", duration.Round(time.Millisecond),
 			"textLen", textOutput.Len(), "toolOutputLen", toolOutput.Len())
+
+		// Signal normal completion so the Stop goroutine doesn't fire on cleanup.
+		normalExit.Store(true)
 
 		// Extract artifacts from /workspace/output/ before destroying the sandbox.
 		var artifacts []agent.Artifact
@@ -530,6 +538,34 @@ func drainPTYData(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.
 		trySendCloud(msgCh, msg)
 	}
 
+	// processChunk parses complete lines from the buffer and dispatches messages.
+	processChunk := func(data []byte, lineBuf *strings.Builder) {
+		lineBuf.Write(data)
+		for {
+			full := lineBuf.String()
+			idx := strings.Index(full, "\n")
+			if idx < 0 {
+				break
+			}
+			line := full[:idx]
+			lineBuf.Reset()
+			lineBuf.WriteString(full[idx+1:])
+			if msg, ok := ParseOHLine(line); ok {
+				processMsg(msg)
+			} else if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "$") && !strings.HasPrefix(trimmed, "daytona@") {
+				slog.Warn("sandbox non-json output", "line", trimmed)
+			}
+		}
+	}
+
+	flushLineBuf := func(lineBuf *strings.Builder) {
+		if remaining := strings.TrimSpace(lineBuf.String()); remaining != "" {
+			if msg, ok := ParseOHLine(remaining); ok {
+				processMsg(msg)
+			}
+		}
+	}
+
 	var lineBuf strings.Builder
 	for {
 		select {
@@ -541,63 +577,21 @@ func drainPTYData(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.
 				select {
 				case data, ok := <-dataCh:
 					if !ok {
-						if remaining := strings.TrimSpace(lineBuf.String()); remaining != "" {
-							if msg, ok := ParseOHLine(remaining); ok {
-								processMsg(msg)
-							}
-						}
+						flushLineBuf(&lineBuf)
 						return
 					}
-					lineBuf.Write(data)
-					for {
-						full := lineBuf.String()
-						idx := strings.Index(full, "\n")
-						if idx < 0 {
-							break
-						}
-						line := full[:idx]
-						lineBuf.Reset()
-						lineBuf.WriteString(full[idx+1:])
-						if msg, ok := ParseOHLine(line); ok {
-							processMsg(msg)
-						}
-					}
+					processChunk(data, &lineBuf)
 				default:
-					// No more buffered data — flush lineBuf and return.
-					if remaining := strings.TrimSpace(lineBuf.String()); remaining != "" {
-						if msg, ok := ParseOHLine(remaining); ok {
-							processMsg(msg)
-						}
-					}
+					flushLineBuf(&lineBuf)
 					return
 				}
 			}
 		case data, ok := <-dataCh:
 			if !ok {
-				if remaining := strings.TrimSpace(lineBuf.String()); remaining != "" {
-					if msg, ok := ParseOHLine(remaining); ok {
-						processMsg(msg)
-					}
-				}
+				flushLineBuf(&lineBuf)
 				return
 			}
-			lineBuf.Write(data)
-			for {
-				full := lineBuf.String()
-				idx := strings.Index(full, "\n")
-				if idx < 0 {
-					break
-				}
-				line := full[:idx]
-				lineBuf.Reset()
-				lineBuf.WriteString(full[idx+1:])
-				if msg, ok := ParseOHLine(line); ok {
-					processMsg(msg)
-				} else if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "$") && !strings.HasPrefix(trimmed, "daytona@") {
-					// Log non-JSON lines (Python tracebacks, errors, etc.)
-					slog.Warn("sandbox non-json output", "line", trimmed)
-				}
-			}
+			processChunk(data, &lineBuf)
 		}
 	}
 }
