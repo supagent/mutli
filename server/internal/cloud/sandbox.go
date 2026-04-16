@@ -607,15 +607,15 @@ Remember: you MUST call write_file before responding with text. If you are about
 
 	// Inject the fallback API key directly into the script (env vars may not
 	// propagate through Daytona PTY sessions).
-	fallbackKeyLiteral := ""
-	if fallbackAPIKey != "" {
-		fallbackKeyLiteral = fallbackAPIKey
-	}
+	// All interpolated values are shell-quoted to prevent injection.
+	quotedKey := shellQuote(fallbackAPIKey)
+	quotedBaseURL := shellQuote(fallbackBaseURL)
+	quotedModel := shellQuote(fallbackModel)
 
 	return fmt.Sprintf(`#!/bin/bash
 
 # Start search proxy (Gemini search grounding, bypasses sandbox network restrictions)
-export OPENAI_API_KEY="%s"
+export OPENAI_API_KEY=%s
 python3 /tmp/search-proxy.py &
 PROXY_PID=$!
 
@@ -628,12 +628,12 @@ for i in $(seq 1 10); do
 done
 
 echo '{"type":"system","message":"Using Google AI Studio (Gemini) with search proxy"}'
-export OPENAI_BASE_URL="%s"
+export OPENAI_BASE_URL=%s
 export OPENHARNESS_CONFIG_DIR="/etc/multica-agent"
-oh %s --base-url "%s" --api-key "%s" --model "%s" || echo "{\"type\":\"error\",\"message\":\"oh exited with code $?\"}"
+oh %s --base-url %s --api-key %s --model %s || echo "{\"type\":\"error\",\"message\":\"oh exited with code $?\"}"
 
 kill $PROXY_PID 2>/dev/null
-`, fallbackKeyLiteral, fallbackBaseURL, ohArgs, fallbackBaseURL, fallbackKeyLiteral, fallbackModel)
+`, quotedKey, quotedBaseURL, ohArgs, quotedBaseURL, quotedKey, quotedModel)
 }
 
 func trySendCloud(ch chan<- agent.Message, msg agent.Message) {

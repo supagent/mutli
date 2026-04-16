@@ -290,7 +290,7 @@ func TestBuildEntrypointScript_ContainsGemini(t *testing.T) {
 func TestBuildEntrypointScript_NoAPIKey(t *testing.T) {
 	script := buildEntrypointScript("test prompt", "auto-fastest", 10, "", "")
 	// With no API key, OPENAI_API_KEY should be empty (OH will fail at startup)
-	if !strings.Contains(script, `OPENAI_API_KEY=""`) {
+	if !strings.Contains(script, `OPENAI_API_KEY=''`) {
 		t.Error("entrypoint script without API key should have empty OPENAI_API_KEY")
 	}
 	// Should still reference Gemini base URL (just with empty key)

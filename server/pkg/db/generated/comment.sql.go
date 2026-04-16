@@ -133,21 +133,28 @@ func (q *Queries) GetCommentInWorkspace(ctx context.Context, arg GetCommentInWor
 const getLatestAgentComment = `-- name: GetLatestAgentComment :one
 SELECT id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id FROM comment
 WHERE issue_id = $1
+  AND workspace_id = $2
   AND author_type = 'agent'
-  AND author_id = $2
-  AND created_at >= $3
+  AND author_id = $3
+  AND created_at >= $4
 ORDER BY created_at DESC
 LIMIT 1
 `
 
 type GetLatestAgentCommentParams struct {
-	IssueID  pgtype.UUID        `json:"issue_id"`
-	AuthorID pgtype.UUID        `json:"author_id"`
-	Since    pgtype.Timestamptz `json:"since"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	AuthorID    pgtype.UUID        `json:"author_id"`
+	Since       pgtype.Timestamptz `json:"since"`
 }
 
 func (q *Queries) GetLatestAgentComment(ctx context.Context, arg GetLatestAgentCommentParams) (Comment, error) {
-	row := q.db.QueryRow(ctx, getLatestAgentComment, arg.IssueID, arg.AuthorID, arg.Since)
+	row := q.db.QueryRow(ctx, getLatestAgentComment,
+		arg.IssueID,
+		arg.WorkspaceID,
+		arg.AuthorID,
+		arg.Since,
+	)
 	var i Comment
 	err := row.Scan(
 		&i.ID,

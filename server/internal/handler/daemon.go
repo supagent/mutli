@@ -596,6 +596,7 @@ func (h *Handler) UploadTaskArtifact(w http.ResponseWriter, r *http.Request) {
 	// Resolve workspace ID from the task's issue.
 	issue, err := h.Queries.GetIssue(r.Context(), task.IssueID)
 	if err != nil {
+		h.Storage.Delete(r.Context(), key)
 		slog.Error("artifact upload: failed to get issue", "task_id", taskID, "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

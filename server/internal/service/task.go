@@ -281,7 +281,9 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		}
 
 		var payload protocol.TaskCompletedPayload
-		_ = json.Unmarshal(result, &payload)
+		if err := json.Unmarshal(result, &payload); err != nil {
+			slog.Warn("failed to unmarshal task result", "task_id", util.UUIDToString(task.ID), "error", err)
+		}
 
 		agentCommented, _ := s.Queries.HasAgentCommentedSince(ctx, db.HasAgentCommentedSinceParams{
 			IssueID:  task.IssueID,
@@ -296,9 +298,10 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		} else if agentCommented && len(payload.ArtifactIDs) > 0 {
 			// Agent already posted a comment during execution — find it and link artifacts.
 			if latestComment, err := s.Queries.GetLatestAgentComment(ctx, db.GetLatestAgentCommentParams{
-				IssueID:  task.IssueID,
-				AuthorID: task.AgentID,
-				Since:    task.StartedAt,
+				IssueID:     task.IssueID,
+				WorkspaceID: workspaceID,
+				AuthorID:    task.AgentID,
+				Since:       task.StartedAt,
 			}); err == nil {
 				s.linkArtifactsToComment(ctx, latestComment.ID, task.IssueID, workspaceID, payload.ArtifactIDs)
 			} else {
