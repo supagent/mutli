@@ -18,8 +18,8 @@ import (
 
 func TestOpenHarnessEndToEnd(t *testing.T) {
 	daytonaKey := os.Getenv("DAYTONA_API_KEY")
-	fallbackKey := os.Getenv("GOOGLE_AI_API_KEY")
-	if daytonaKey == "" || fallbackKey == "" {
+	googleKey := os.Getenv("GOOGLE_AI_API_KEY")
+	if daytonaKey == "" || googleKey == "" {
 		t.Skip("DAYTONA_API_KEY and GOOGLE_AI_API_KEY required; skipping")
 	}
 
@@ -52,7 +52,7 @@ func TestOpenHarnessEndToEnd(t *testing.T) {
 	sandbox, err := client.Create(ctx, types.ImageParams{
 		SandboxBaseParams: types.SandboxBaseParams{
 			EnvVars: map[string]string{
-				"OPENAI_API_KEY": fallbackKey,
+				"OPENAI_API_KEY": googleKey,
 				"TERM":           "dumb",
 			},
 		},
@@ -112,8 +112,8 @@ func TestOpenHarnessEndToEnd(t *testing.T) {
 		"-p", `"What is 2+2? Reply with just the number."`,
 		"--output-format", "stream-json",
 		"--api-format", "openai",
-		"--base-url", "https://openrouter.ai/api/v1",
-		"--model", "anthropic/claude-sonnet-4",
+		"--base-url", fallbackBaseURL,
+		"--model", fallbackModel,
 		"--max-turns", "1",
 		"--dangerously-skip-permissions",
 		"--bare",

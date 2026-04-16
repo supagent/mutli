@@ -537,6 +537,13 @@ func (h *Handler) UploadTaskArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Artifact uploads must come from the daemon, not regular users.
+	// Without this check, workspace members could spoof agent-attributed uploads.
+	if middleware.DaemonWorkspaceIDFromContext(r.Context()) == "" {
+		writeError(w, http.StatusForbidden, "daemon token required")
+		return
+	}
+
 	taskID := chi.URLParam(r, "taskId")
 	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
 	if !ok {
@@ -606,6 +613,8 @@ func (h *Handler) UploadTaskArtifact(w http.ResponseWriter, r *http.Request) {
 		SizeBytes:    int64(len(data)),
 	})
 	if err != nil {
+		// Clean up the uploaded blob to avoid orphaned objects in storage.
+		h.Storage.Delete(r.Context(), key)
 		slog.Error("artifact upload: failed to create attachment record", "task_id", taskID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create attachment")
 		return

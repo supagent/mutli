@@ -282,6 +282,11 @@ func (sm *SandboxManager) Execute(ctx context.Context, cfg agent.SandboxTaskConf
 }
 
 func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (*agent.Session, error) {
+	// Fail fast: Gemini API key is required for embedded agent execution.
+	if sm.cfg.FallbackAPIKey == "" {
+		return nil, fmt.Errorf("GOOGLE_AI_API_KEY is required for embedded agent execution")
+	}
+
 	timeout := taskCfg.Timeout
 	if timeout == 0 {
 		timeout = defaultTimeout
@@ -551,10 +556,8 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// buildEntrypointScript creates a bash script that:
-// 1. If fallbackAPIKey is set, uses Google AI Studio (Gemini) directly
-// 2. Otherwise starts ModelRelay, health-checks, uses if available
-// 3. Runs OH with the resolved provider
+// buildEntrypointScript creates a bash script that starts the search proxy
+// and runs OpenHarness with Google AI Studio (Gemini) as the LLM provider.
 func buildEntrypointScript(prompt, model string, maxTurns int, systemPrompt, fallbackAPIKey string) string {
 	// Wrap the user's task in explicit identity + instructions.
 	// This goes in the -p prompt itself (not --append-system-prompt) because

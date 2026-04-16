@@ -274,21 +274,35 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// posting here would create a duplicate.
 	// Chat tasks: no comment posting needed.
 	if task.IssueID.Valid && !task.TriggerCommentID.Valid {
+		// Resolve workspace ID for multi-tenancy scoping on artifact linkage.
+		var workspaceID pgtype.UUID
+		if issue, issueErr := s.Queries.GetIssue(ctx, task.IssueID); issueErr == nil {
+			workspaceID = issue.WorkspaceID
+		}
+
+		var payload protocol.TaskCompletedPayload
+		_ = json.Unmarshal(result, &payload)
+
 		agentCommented, _ := s.Queries.HasAgentCommentedSince(ctx, db.HasAgentCommentedSinceParams{
 			IssueID:  task.IssueID,
 			AuthorID: task.AgentID,
 			Since:    task.StartedAt,
 		})
-		if !agentCommented {
-			var payload protocol.TaskCompletedPayload
-			if err := json.Unmarshal(result, &payload); err == nil {
-				if payload.Output != "" {
-					comment := s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(payload.Output), "comment", task.TriggerCommentID)
-					// Link artifact attachments to the agent's summary comment.
-					if comment != nil && len(payload.ArtifactIDs) > 0 {
-						s.linkArtifactsToComment(ctx, comment.ID, task.IssueID, payload.ArtifactIDs)
-					}
-				}
+		if !agentCommented && payload.Output != "" {
+			comment := s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(payload.Output), "comment", task.TriggerCommentID)
+			if comment != nil && len(payload.ArtifactIDs) > 0 {
+				s.linkArtifactsToComment(ctx, comment.ID, task.IssueID, workspaceID, payload.ArtifactIDs)
+			}
+		} else if agentCommented && len(payload.ArtifactIDs) > 0 {
+			// Agent already posted a comment during execution — find it and link artifacts.
+			if latestComment, err := s.Queries.GetLatestAgentComment(ctx, db.GetLatestAgentCommentParams{
+				IssueID:  task.IssueID,
+				AuthorID: task.AgentID,
+				Since:    task.StartedAt,
+			}); err == nil {
+				s.linkArtifactsToComment(ctx, latestComment.ID, task.IssueID, workspaceID, payload.ArtifactIDs)
+			} else {
+				slog.Warn("could not find agent comment to link artifacts", "task_id", util.UUIDToString(task.ID), "error", err)
 			}
 		}
 	}
@@ -610,15 +624,16 @@ func (s *TaskService) createAgentComment(ctx context.Context, issueID, agentID p
 }
 
 // linkArtifactsToComment links pre-uploaded artifact attachments to a comment.
-func (s *TaskService) linkArtifactsToComment(ctx context.Context, commentID, issueID pgtype.UUID, artifactIDs []string) {
+func (s *TaskService) linkArtifactsToComment(ctx context.Context, commentID, issueID, workspaceID pgtype.UUID, artifactIDs []string) {
 	uuids := make([]pgtype.UUID, len(artifactIDs))
 	for i, id := range artifactIDs {
 		uuids[i] = util.ParseUUID(id)
 	}
 	if err := s.Queries.LinkAttachmentsToComment(ctx, db.LinkAttachmentsToCommentParams{
-		CommentID: commentID,
-		IssueID:   issueID,
-		Column3:   uuids,
+		CommentID:   commentID,
+		IssueID:     issueID,
+		WorkspaceID: workspaceID,
+		Column4:     uuids,
 	}); err != nil {
 		slog.Error("failed to link artifacts to comment", "comment_id", util.UUIDToString(commentID), "error", err)
 	}
