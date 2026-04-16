@@ -571,8 +571,10 @@ func drainPTYData(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.
 		select {
 		case <-ctx.Done():
 			// Context cancelled (user cancel or timeout). Drain any remaining
-			// buffered data from the channel before returning — sandbox.Stop()
-			// closes DataChan, so these reads are bounded.
+			// buffered data from the channel — sandbox.Stop() closes DataChan
+			// asynchronously, so we wait briefly for late-arriving chunks rather
+			// than returning immediately on an empty channel.
+			drainTimeout := time.After(2 * time.Second)
 			for {
 				select {
 				case data, ok := <-dataCh:
@@ -581,7 +583,7 @@ func drainPTYData(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.
 						return
 					}
 					processChunk(data, &lineBuf)
-				default:
+				case <-drainTimeout:
 					flushLineBuf(&lineBuf)
 					return
 				}

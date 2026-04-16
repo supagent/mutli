@@ -150,7 +150,9 @@ func (s *TaskService) CancelTask(ctx context.Context, taskID pgtype.UUID) (*db.A
 	if err != nil {
 		// Task is already in a terminal state (completed, failed, or already cancelled).
 		// Return it as-is — cancelling a finished task is a no-op per acceptance criteria.
-		// Still broadcast task:cancelled so the frontend clears any stale live card.
+		// We intentionally broadcast task:cancelled even for completed/failed tasks so
+		// the frontend clears any stale live card (e.g., daemon cancel-poll beat the
+		// user's API call, leaving the card orphaned without a WS event).
 		if errors.Is(err, pgx.ErrNoRows) {
 			existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID)
 			if lookupErr != nil {

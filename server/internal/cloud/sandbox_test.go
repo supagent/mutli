@@ -141,11 +141,12 @@ func TestLineBuffer_ContextCancellation(t *testing.T) {
 		close(done)
 	}()
 
-	// Must complete within 2 seconds (proves no infinite hang)
+	// Must complete within 5 seconds (the post-cancel drain waits up to 2s
+	// for late-arriving data before returning, so we allow headroom).
 	select {
 	case <-done:
 		// good
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("drainPTYData hung after context cancellation")
 	}
 	close(msgCh)

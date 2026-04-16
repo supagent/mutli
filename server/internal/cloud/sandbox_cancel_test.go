@@ -202,15 +202,19 @@ func TestSandboxStop_ConcurrentDrain(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 
-	// Wait for first output (OH has started)
+	// Single-owner goroutine reads DataChan and tees into a local channel.
+	// This avoids two goroutines racing on the same channel.
+	teeCh := make(chan []byte, 256)
 	firstOutput := make(chan struct{})
 	go func() {
-		for range handle.DataChan() {
-			select {
-			case <-firstOutput:
-			default:
+		defer close(teeCh)
+		first := true
+		for data := range handle.DataChan() {
+			if first {
 				close(firstOutput)
+				first = false
 			}
+			teeCh <- data
 		}
 	}()
 
@@ -228,11 +232,11 @@ func TestSandboxStop_ConcurrentDrain(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	// Goroutine 1: drain PTY data (simulates the drain goroutine)
+	// Goroutine 1: drain PTY data via tee channel (simulates the drain goroutine)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		drainPTYData(runCtx, handle.DataChan(), msgCh, &textOutput, &toolOutput)
+		drainPTYData(runCtx, teeCh, msgCh, &textOutput, &toolOutput)
 		close(msgCh)
 	}()
 
