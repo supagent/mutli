@@ -568,6 +568,17 @@ func (h *Handler) UploadTaskArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	// Enforce file-type allowlist for artifact uploads.
+	ext := strings.ToLower(path.Ext(header.Filename))
+	allowedArtifactExts := map[string]bool{
+		".md": true, ".csv": true, ".json": true,
+		".txt": true, ".pdf": true, ".xlsx": true,
+	}
+	if !allowedArtifactExts[ext] {
+		writeError(w, http.StatusBadRequest, "file type not allowed")
+		return
+	}
+
 	data, err := io.ReadAll(file)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to read file")
