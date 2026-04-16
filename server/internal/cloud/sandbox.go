@@ -466,6 +466,18 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 			})
 		}
 
+		// Replace the comment with the clean report content when available.
+		// The agent's raw text output includes search result dumps and tool
+		// echoes which are noisy. The report.md artifact has the curated content.
+		if finalStatus == "completed" && len(artifacts) > 0 {
+			for _, a := range artifacts {
+				if a.Filename == "report.md" && len(a.Data) > 0 {
+					finalOutput = string(a.Data)
+					break
+				}
+			}
+		}
+
 		// Cleanup sandbox
 		cleanupSandbox(sandbox, sm.logger)
 
