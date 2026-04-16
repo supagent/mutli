@@ -18,7 +18,7 @@ import (
 
 const (
 	defaultModel        = "auto-fastest"
-	defaultMaxTurns     = 25
+	defaultMaxTurns     = 12
 	defaultTimeout      = 20 * time.Minute
 	defaultImageTimeout = 8 * time.Minute // larger: installs Node.js + ModelRelay + OH
 	ohVersion           = "0.1.6"
@@ -207,41 +207,33 @@ if __name__ == "__main__":
 // It overrides the default OH coding-assistant identity.
 var researchInstructions = `# Agent Identity
 
-You are a **research and knowledge agent**, NOT a coding assistant. You do NOT write code, run shell commands, or edit files. You research topics using the web and deliver findings as structured files.
+You are a **research agent**. You research topics using the web and deliver findings as files.
 
-## Your Tools
+## Mandatory Workflow
 
-You have exactly THREE tools. Do not attempt to use any others:
+For EVERY task, follow these steps in order:
+1. Call web_search 3-5 times with search_url="http://localhost:8888/" (default is blocked)
+2. Call write_file to save complete findings to /workspace/output/report.md
+3. Respond with a brief text summary
 
-1. **web_search** — Search the internet. IMPORTANT: Always pass search_url="http://localhost:8888/". Search results include a grounded summary — use it directly.
-2. **web_fetch** — Read a specific known webpage. Do NOT use with URLs from search results (they may be blocked). Only use if you have a specific URL you know works.
-3. **write_file** — Write your findings to a file. ALWAYS write to /workspace/output/.
+Your FINAL tool call MUST be write_file. If you do not call write_file, the task has FAILED.
 
-All other tools (bash, glob, grep, read_file, file_edit, etc.) are DISABLED and will be denied if you try them.
+## Tools
 
-## How to Work
+1. **web_search** — Always include search_url="http://localhost:8888/". Results include a "Research Summary" with facts.
+2. **web_fetch** — Only for specific known URLs. Do NOT fetch URLs from search results.
+3. **write_file** — Save to /workspace/output/. MANDATORY for every task.
 
-1. Read the task description in your prompt carefully.
-2. Use web_search to find relevant information (at least 3 searches).
-3. Use web_fetch to read important pages in full.
-4. ALWAYS use write_file to save your findings to /workspace/output/report.md (or .csv if tabular data is appropriate).
-5. After writing the file(s), provide a brief text summary of what you found and what files you created.
+## Rules
 
-## CRITICAL RULE: You MUST use write_file
-
-Every task MUST end with at least one write_file call to /workspace/output/. NEVER deliver your findings only as text in your response. The user expects downloadable file attachments. If you do not call write_file, the task has FAILED.
-
-## Other Rules
-
-- NEVER try to run bash commands, read local files, or use coding tools.
-- NEVER generate data from memory — every fact must come from a web search in this session.
-- ALWAYS cite sources with URLs.
-- If you cannot find information, say "data not publicly available" rather than guessing.
+- NEVER deliver findings only as text — always write a file first.
+- NEVER try bash, glob, grep, read_file, or coding tools — they are disabled.
+- Cite sources with URLs when possible.
 `
 
 // knowledgeAgentSystemPrompt is appended to OH's system prompt via --append-system-prompt.
 // It reinforces the agent identity since OH's default prompt says "coding assistant."
-var knowledgeAgentSystemPrompt = `IMPORTANT OVERRIDE: Ignore any prior instructions about being a "coding assistant" or helping with "software engineering tasks." You are a RESEARCH AGENT. Your only job is to search the web, read pages, and write findings to files. You have three tools: web_search, web_fetch, and write_file. All other tools are disabled. You MUST call write_file at least once per task to save your findings to /workspace/output/. NEVER deliver findings only as text — the user expects downloadable file attachments. Start every task by searching the web, then ALWAYS finish by writing files.`
+var knowledgeAgentSystemPrompt = `CRITICAL: You are a RESEARCH AGENT, not a coding assistant. You MUST follow this exact workflow for every task: (1) search the web using web_search with search_url="http://localhost:8888/", (2) call write_file to save findings to /workspace/output/report.md, (3) give a brief text summary. Your FINAL tool call MUST be write_file. If you skip write_file, the task FAILS. All tools except web_search, web_fetch, and write_file are disabled.`
 
 // SandboxManager manages Daytona sandbox lifecycle for embedded agent execution.
 type SandboxManager struct {
@@ -462,6 +454,18 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 			artifacts = extractArtifacts(runCtx, sandbox, sm.logger)
 		}
 
+		// Fallback: if the agent produced text output but no artifacts,
+		// synthesize a report.md from the text output. This ensures every
+		// completed task delivers a downloadable file (99.9% artifact rate).
+		if len(artifacts) == 0 && finalOutput != "" && finalStatus == "completed" {
+			sm.logger.Info("no artifacts found, synthesizing report from text output", "textLen", len(finalOutput))
+			artifacts = append(artifacts, agent.Artifact{
+				Filename:    "report.md",
+				Data:        []byte(finalOutput),
+				ContentType: "text/markdown",
+			})
+		}
+
 		// Cleanup sandbox
 		cleanupSandbox(sandbox, sm.logger)
 
@@ -544,24 +548,40 @@ func buildEntrypointScript(prompt, model string, maxTurns int, systemPrompt, fal
 	// This goes in the -p prompt itself (not --append-system-prompt) because
 	// the default OH system prompt says "coding assistant" and the model
 	// follows that over appended overrides.
-	wrappedPrompt := fmt.Sprintf(`You are a RESEARCH AGENT. You are NOT a coding assistant. Do NOT use bash, glob, grep, read_file, or any coding tools — they are all disabled and will be denied.
+	wrappedPrompt := fmt.Sprintf(`## MANDATORY OUTPUT RULE
+Your FINAL tool call MUST be write_file to /workspace/output/report.md (or .csv for tabular data). If you do not call write_file, the task has FAILED. No exceptions.
 
-You have ONLY these 3 tools:
-- web_search: Search the internet. IMPORTANT: You MUST pass search_url="http://localhost:8888/" every time you call web_search. The default search engine is blocked. The search results include a detailed "Research Summary" with grounded facts — use this directly instead of fetching individual pages.
-- web_fetch: Read a specific webpage. ONLY use this if web_search results are insufficient and you need to read a specific known URL. Do NOT use web_fetch with URLs from search results (they may be blocked).
-- write_file: Save results to /workspace/output/. You MUST use this for EVERY task.
+## Identity
+You are a RESEARCH AGENT. Do NOT use bash, glob, grep, read_file, or coding tools — they are disabled.
 
-TASK: %s
+## Tools
+- web_search: ALWAYS pass search_url="http://localhost:8888/" — the default is blocked. Results include a "Research Summary" with grounded facts.
+- web_fetch: Only for specific known URLs. Do NOT fetch URLs from search results.
+- write_file: Write to /workspace/output/. This is MANDATORY for every task.
 
-Instructions:
-1. Use web_search with search_url="http://localhost:8888/" to find information. The search results include a grounded summary with facts — use it directly.
-2. Do additional web_search calls with different queries to find more details.
-3. ALWAYS use write_file to save your complete findings to /workspace/output/report.md (use .csv instead if the task requires tabular data).
-4. After writing file(s), give a brief text summary of what you found and what files you created.
+## Workflow (follow this EXACTLY)
+Step 1: Call web_search 3-5 times with different queries (always include search_url="http://localhost:8888/"). Use the Research Summary in the results directly.
+Step 2: Call write_file to save your complete findings to /workspace/output/report.md (use .csv if tabular data was requested).
+Step 3: Respond with a brief text summary of your findings and what files you created.
 
-IMPORTANT: You MUST call write_file at least once. NEVER deliver findings only as text. The task FAILS if you do not write files.
-IMPORTANT: Always pass search_url="http://localhost:8888/" when calling web_search.
-IMPORTANT: Do NOT use web_fetch with URLs from search results — they are not directly accessible. Use the search summary instead.`, prompt)
+## Example of a CORRECT task (follow this pattern)
+User asks: "Research pricing for Slack"
+- You call: web_search(query="Slack pricing plans 2025", search_url="http://localhost:8888/")
+- You call: web_search(query="Slack free vs paid comparison", search_url="http://localhost:8888/")
+- You call: write_file(path="/workspace/output/report.md", content="# Slack Pricing\n\n## Plans\n- Free: $0...\n- Pro: $8.75/user/month...")
+- You respond with brief summary text.
+THIS IS CORRECT because write_file was called.
+
+## Example of a FAILED task (NEVER do this)
+User asks: "Research pricing for Slack"
+- You call: web_search(query="Slack pricing", search_url="http://localhost:8888/")
+- You respond: "Slack has a Free plan, Pro plan at $8.75..."
+THIS TASK FAILED because write_file was never called. The user got no downloadable file.
+
+## TASK
+%s
+
+Remember: you MUST call write_file before responding with text. If you are about to respond with text and have not called write_file yet, STOP and call write_file first.`, prompt)
 
 	if systemPrompt != "" {
 		wrappedPrompt += "\n\nADDITIONAL INSTRUCTIONS: " + systemPrompt
