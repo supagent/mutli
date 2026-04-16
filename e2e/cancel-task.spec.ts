@@ -249,20 +249,23 @@ test.describe("Cancel Task (I3)", () => {
     const cancelledStatus = page.locator("text=Cancelled");
     await expect(cancelledStatus).toBeVisible({ timeout: 10_000 });
 
-    // Verify the MinusCircle icon is present (rendered as an SVG alongside "Cancelled")
-    // The MinusCircle icon is the sibling of the cancelled task entry
-    // We check that the cancelled entry row contains the muted-foreground styling
-    // (completed = text-success, cancelled = text-muted-foreground, failed = text-destructive)
+    // Verify the cancelled entry uses muted styling (not red/destructive)
     const cancelledEntry = page.locator("button", { hasText: "Cancelled" });
     await expect(cancelledEntry).toBeVisible();
+    const cancelledIcon = cancelledEntry.locator("svg").first();
+    await expect(cancelledIcon).toHaveClass(/text-muted-foreground/);
 
     // Take final screenshot showing execution history with Cancelled status
     await page.screenshot({ path: "e2e/artifacts/cancel-task-execution-history.png" });
 
-    // Also verify via API that the task status is "cancelled"
-    const tasks = await listTasksByIssue(token, wsId, issue.id);
-    const cancelledTask = tasks.find((t) => t.status === "cancelled");
-    expect(cancelledTask).toBeDefined();
+    // Verify via API that the task status is "cancelled" (poll to avoid race with WS)
+    const cancelledTasks = await pollUntil(
+      () => listTasksByIssue(token, wsId, issue.id),
+      (t) => t.some((task) => task.status === "cancelled"),
+      15_000,
+      2_000,
+    );
+    expect(cancelledTasks.find((t) => t.status === "cancelled")).toBeDefined();
   });
 
   // -- 2. Cancel on already-completed task is a no-op -------------------------
@@ -296,9 +299,8 @@ test.describe("Cancel Task (I3)", () => {
     // This should not error — it should be a no-op or return a non-5xx response
     const cancelRes = await cancelTaskViaApi(token, wsId, issue.id, completedTask!.id);
 
-    // Accept 200 (OK/no-op) or 4xx (already completed — client error, not server error)
-    // The key assertion: no 5xx server error
-    expect(cancelRes.status).toBeLessThan(500);
+    // Cancel on a completed task is a no-op — backend returns 200
+    expect(cancelRes.ok).toBeTruthy();
 
     // Verify the task status is still completed/failed (not changed to cancelled)
     const tasksAfter = await listTasksByIssue(token, wsId, issue.id);
