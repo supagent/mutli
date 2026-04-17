@@ -13,14 +13,14 @@ if [ -d ".venv" ]; then
 fi
 
 # Load API key from project .env if not already set
-if [ -z "${GOOGLE_AI_API_KEY:-}" ]; then
+if [ -z "${GOOGLE_API_KEY:-}" ]; then
     if [ -f "../../../.env" ]; then
-        export "$(grep GOOGLE_AI_API_KEY ../../../.env | xargs)"
+        export GOOGLE_API_KEY="$(grep GOOGLE_AI_API_KEY ../../../.env | cut -d= -f2)"
     fi
 fi
 
-if [ -z "${GOOGLE_AI_API_KEY:-}" ]; then
-    echo "ERROR: GOOGLE_AI_API_KEY not set"
+if [ -z "${GOOGLE_API_KEY:-}" ]; then
+    echo "ERROR: GOOGLE_API_KEY not set"
     exit 1
 fi
 

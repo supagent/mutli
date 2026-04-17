@@ -67,10 +67,11 @@ async def research_asana(query: str) -> dict:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main():
-    api_key = os.environ.get("GOOGLE_AI_API_KEY")
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_AI_API_KEY")
     if not api_key:
-        print("FAIL: GOOGLE_AI_API_KEY not set")
+        print("FAIL: GOOGLE_API_KEY not set")
         return False
+    os.environ["GOOGLE_API_KEY"] = api_key
 
     agent = Agent(
         name="comparison_agent",
