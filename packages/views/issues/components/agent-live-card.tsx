@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Bot, ChevronRight, ChevronDown, Loader2, ArrowDown, Brain, AlertCircle, Clock, CheckCircle2, XCircle, MinusCircle, Square, Maximize2 } from "lucide-react";
+import { Bot, ChevronRight, ChevronDown, Loader2, ArrowDown, Brain, AlertCircle, Clock, CheckCircle2, XCircle, MinusCircle, Square, Maximize2, RotateCcw } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWSEvent } from "@multica/core/realtime";
 import type { TaskMessagePayload, TaskCompletedPayload, TaskFailedPayload, TaskCancelledPayload } from "@multica/core/types/events";
@@ -480,6 +480,17 @@ export function TaskRunHistory({ issueId }: TaskRunHistoryProps) {
     }, [issueId]),
   );
 
+  // Refresh when a new task is dispatched (retry creates a task with
+  // retried_from_id — re-fetching hides the Retry button on the original).
+  useWSEvent(
+    "task:dispatch",
+    useCallback((payload: unknown) => {
+      const p = payload as { issue_id?: string };
+      if (p.issue_id !== issueId) return;
+      api.listTasksByIssue(issueId).then(setTasks).catch(console.error);
+    }, [issueId]),
+  );
+
   const completedTasks = tasks.filter((t) => t.status === "completed" || t.status === "failed" || t.status === "cancelled");
   if (completedTasks.length === 0) return null;
 
@@ -493,7 +504,9 @@ export function TaskRunHistory({ issueId }: TaskRunHistoryProps) {
       <CollapsibleContent>
         <div className="mt-1 space-y-2">
           {completedTasks.map((task) => (
-            <TaskRunEntry key={task.id} task={task} />
+            <TaskRunEntry key={task.id} task={task} allTasks={tasks} onRetried={() => {
+              api.listTasksByIssue(issueId).then(setTasks).catch(console.error);
+            }} />
           ))}
         </div>
       </CollapsibleContent>
@@ -501,11 +514,13 @@ export function TaskRunHistory({ issueId }: TaskRunHistoryProps) {
   );
 }
 
-function TaskRunEntry({ task }: { task: AgentTask }) {
+function TaskRunEntry({ task, allTasks, onRetried }: { task: AgentTask; allTasks: AgentTask[]; onRetried: () => void }) {
   const { getActorName } = useActorName();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<TimelineItem[] | null>(null);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retried, setRetried] = useState(false);
 
   const loadMessages = useCallback(() => {
     if (items !== null) return; // already loaded
@@ -525,6 +540,31 @@ function TaskRunEntry({ task }: { task: AgentTask }) {
     ? formatDuration(task.started_at, task.completed_at)
     : null;
 
+  const isRetryable = task.status === "failed" || task.status === "cancelled";
+  const alreadyRetried = retried || allTasks.some((t) => t.retried_from_id === task.id);
+  const hasActiveTask = allTasks.some((t) => t.status === "queued" || t.status === "dispatched" || t.status === "running");
+  const showRetryButton = isRetryable && !alreadyRetried && !hasActiveTask;
+
+  const handleRetry = useCallback(async () => {
+    if (retrying || alreadyRetried) return;
+    setRetrying(true);
+    try {
+      await api.retryTask(task.id);
+      setRetried(true);
+      onRetried();
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : "Failed to retry task";
+      // Translate backend errors into user-friendly messages.
+      const msg = raw.includes("issue is done") || raw.includes("issue is closed")
+        ? "This issue is marked as done — change its status to retry"
+        : raw.includes("active task")
+          ? "A task is already running — wait for it to finish"
+          : raw;
+      toast.error(msg);
+      setRetrying(false);
+    }
+  }, [task.id, retrying, alreadyRetried, onRetried]);
+
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent/30 transition-colors border border-transparent hover:border-border">
@@ -540,7 +580,24 @@ function TaskRunEntry({ task }: { task: AgentTask }) {
           {new Date(task.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
         </span>
         {duration && <span className="text-muted-foreground">{duration}</span>}
-        <span className={cn("ml-auto capitalize", task.status === "completed" ? "text-success" : task.status === "cancelled" ? "text-muted-foreground" : "text-destructive")}>
+        {showRetryButton && (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => { e.stopPropagation(); if (!retrying) handleRetry(); }}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); if (!retrying) handleRetry(); } }}
+            className={cn("ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors cursor-pointer", retrying && "opacity-50 pointer-events-none")}
+            title="Retry this task"
+          >
+            {retrying ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+            <span>{retrying ? "Retrying..." : "Retry"}</span>
+          </span>
+        )}
+        <span className={cn(
+          !showRetryButton && "ml-auto",
+          "capitalize",
+          task.status === "completed" ? "text-success" : task.status === "cancelled" ? "text-muted-foreground" : "text-destructive",
+        )}>
           {task.status}
         </span>
         <span
