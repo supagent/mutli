@@ -212,29 +212,32 @@ func (s *TaskService) RetryTask(ctx context.Context, taskID pgtype.UUID, workspa
 		return nil, ErrAlreadyRetried
 	}
 
+	// Retry is only supported for issue tasks (chat has its own "send again" flow).
+	if !original.IssueID.Valid {
+		return nil, ErrTaskNotRetryable
+	}
+
 	// Guard: no active task on the same issue.
-	if original.IssueID.Valid {
-		hasActive, err := s.Queries.HasActiveTaskForIssue(ctx, original.IssueID)
-		if err != nil {
-			return nil, fmt.Errorf("check active task: %w", err)
-		}
-		if hasActive {
-			return nil, ErrActiveTaskExists
-		}
+	hasActive, err := s.Queries.HasActiveTaskForIssue(ctx, original.IssueID)
+	if err != nil {
+		return nil, fmt.Errorf("check active task: %w", err)
+	}
+	if hasActive {
+		return nil, ErrActiveTaskExists
+	}
 
-		// Guard: issue must not be closed/done.
-		issue, err := s.Queries.GetIssue(ctx, original.IssueID)
-		if err != nil {
-			return nil, fmt.Errorf("get issue: %w", err)
-		}
-		if issue.Status == "done" || issue.Status == "closed" {
-			return nil, ErrIssueClosed
-		}
+	// Guard: issue must not be closed/done.
+	issue, err := s.Queries.GetIssue(ctx, original.IssueID)
+	if err != nil {
+		return nil, fmt.Errorf("get issue: %w", err)
+	}
+	if issue.Status == "done" || issue.Status == "closed" {
+		return nil, ErrIssueClosed
+	}
 
-		// Verify issue belongs to the expected workspace.
-		if util.UUIDToString(issue.WorkspaceID) != workspaceID {
-			return nil, ErrTaskNotFound
-		}
+	// Verify issue belongs to the expected workspace.
+	if util.UUIDToString(issue.WorkspaceID) != workspaceID {
+		return nil, ErrTaskNotFound
 	}
 
 	// Create the retry task.
