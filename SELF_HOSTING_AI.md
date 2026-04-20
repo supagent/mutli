@@ -28,7 +28,7 @@ Wait for the server output `✓ Multica server is running and CLI is ready!` bef
 ## Alternative: Manual Setup
 
 ```bash
-git clone https://github.com/supagent/mutli.git
+git clone https://github.com/supagent/mutli.git multica
 cd multica
 make selfhost
 brew install supagent/multi-cli/multica

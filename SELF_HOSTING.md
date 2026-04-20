@@ -41,7 +41,7 @@ If you prefer to run each step manually:
 **Prerequisites:** Docker and Docker Compose.
 
 ```bash
-git clone https://github.com/supagent/mutli.git
+git clone https://github.com/supagent/mutli.git multica
 cd multica
 make selfhost
 ```
@@ -161,7 +161,7 @@ Migrations run automatically on backend startup.
 If you prefer running Docker Compose steps manually instead of `make selfhost`:
 
 ```bash
-git clone https://github.com/supagent/mutli.git
+git clone https://github.com/supagent/mutli.git multica
 cd multica
 cp .env.example .env
 ```
