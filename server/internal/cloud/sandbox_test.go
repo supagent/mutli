@@ -257,7 +257,7 @@ func TestDetectContentType(t *testing.T) {
 		{"no extension binary", "file", []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, "image/png"},
 
 		// Known extension via mime package (not in our override map)
-		{"xyz chemical", "data.xyz", []byte("just plain text here"), "chemical/x-xyz"},
+		// Platform-dependent MIME types removed (chemical/x-xyz not registered on all OS)
 		// Truly unknown extension — falls through to content sniffing
 		{"unknown ext text", "data.zzz123", []byte("just plain text here"), "text/plain; charset=utf-8"},
 	}
