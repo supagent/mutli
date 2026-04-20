@@ -49,17 +49,15 @@ changelog:
 brews:
   - name: multica
     repository:
-      owner: supagent
-      name: homebrew-multi-cli
+      owner: multica-ai
+      name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
-    homepage: "https://github.com/supagent/mutli"
+    homepage: "https://github.com/multica-ai/multica"
     description: "Multica CLI — local agent runtime and management tool for the Multica platform"
     license: "Apache-2.0"
     install: |
       bin.install "multica"
     test: |
       system "#{bin}/multica", "version"
-    download_strategy: GitHubCliDownloadStrategy
-    custom_require: "../Library/github_cli_download_strategy"

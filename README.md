@@ -17,8 +17,8 @@
 The open-source managed agents platform.<br/>
 Turn coding and research agents into real teammates — assign tasks, track progress, compound skills.
 
-[![CI](https://github.com/supagent/mutli/actions/workflows/ci.yml/badge.svg)](https://github.com/supagent/mutli/actions/workflows/ci.yml)
-[![GitHub stars](https://img.shields.io/github/stars/supagent/mutli?style=flat)](https://github.com/supagent/mutli/stargazers)
+[![CI](https://github.com/multica-ai/multica/actions/workflows/ci.yml/badge.svg)](https://github.com/multica-ai/multica/actions/workflows/ci.yml)
+[![GitHub stars](https://img.shields.io/github/stars/multica-ai/multica?style=flat)](https://github.com/multica-ai/multica/stargazers)
 
 [Website](https://multica.ai) · [Cloud](https://multica.ai/app) · [X](https://x.com/MulticaAI) · [Self-Hosting](SELF_HOSTING.md) · [Contributing](CONTRIBUTING.md)
 
@@ -51,7 +51,7 @@ Multica manages the full agent lifecycle: from task assignment to execution moni
 ## Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/supagent/mutli/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
 ```
 
 Installs the Multica CLI on macOS and Linux. Works with Homebrew or downloads the binary directly.
@@ -59,7 +59,7 @@ Installs the Multica CLI on macOS and Linux. Works with Homebrew or downloads th
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/supagent/mutli/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
 ```
 
 Then configure, authenticate, and start the daemon in one command:
@@ -71,7 +71,7 @@ multica setup          # Connect to Multica Cloud, log in, start daemon
 > **Self-hosting?** Add `--with-server` to deploy a full Multica server on your machine:
 >
 > ```bash
-> curl -fsSL https://raw.githubusercontent.com/supagent/mutli/main/scripts/install.sh | bash -s -- --with-server
+> curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
 > multica setup self-host
 > ```
 >

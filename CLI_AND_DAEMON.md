@@ -7,14 +7,14 @@ The `multica` CLI connects your local machine to Multica. It handles authenticat
 ### Homebrew (macOS/Linux)
 
 ```bash
-brew tap supagent/multi-cli
+brew tap multica-ai/tap
 brew install multica
 ```
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/supagent/mutli.git
+git clone https://github.com/multica-ai/multica.git
 cd multica
 make build
 cp server/bin/multica /usr/local/bin/multica

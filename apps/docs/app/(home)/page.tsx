@@ -18,7 +18,7 @@ export default function HomePage() {
           Get Started
         </Link>
         <Link
-          href="https://github.com/supagent/mutli"
+          href="https://github.com/multica-ai/multica"
           className="inline-flex items-center rounded-md border border-fd-border px-6 py-3 text-sm font-medium transition-colors hover:bg-fd-accent"
         >
           GitHub
