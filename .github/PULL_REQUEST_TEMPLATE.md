@@ -35,7 +35,7 @@ Closes #
 
 ## Checklist
 
-- [ ] I searched for [existing PRs](https://github.com/multica-ai/multica/pulls) to make sure this isn't a duplicate
+- [ ] I searched for [existing PRs](https://github.com/supagent/mutli/pulls) to make sure this isn't a duplicate
 - [ ] My commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (`fix(scope):`, `feat(scope):`, etc.)
 - [ ] `make check` passes (typecheck, unit tests, Go tests, E2E)
 - [ ] Changes follow existing code patterns and conventions
