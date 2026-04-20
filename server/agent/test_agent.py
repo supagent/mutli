@@ -734,6 +734,37 @@ class TestTools:
         assert len(names) == 8
 
 
+    # ── Path traversal prevention ──────────────────────────────────────────
+
+    def test_safe_output_path_strips_traversal(self):
+        """_safe_output_path strips directory traversal, keeping only basename."""
+        import tools
+        path, err = tools._safe_output_path("../../etc/passwd")
+        assert err is None
+        # os.path.basename strips the traversal — file goes to /workspace/output/passwd
+        assert path == "/workspace/output/passwd"
+
+    def test_safe_output_path_strips_directory(self):
+        """_safe_output_path strips directory components."""
+        import tools
+        path, err = tools._safe_output_path("subdir/report.md")
+        assert err is None
+        assert path == "/workspace/output/report.md"
+
+    def test_safe_output_path_rejects_dotdot(self):
+        """_safe_output_path rejects bare '..' filename."""
+        import tools
+        path, err = tools._safe_output_path("..")
+        assert err is not None
+
+    def test_safe_output_path_normal_filename(self):
+        """_safe_output_path accepts normal filenames."""
+        import tools
+        path, err = tools._safe_output_path("report.md")
+        assert err is None
+        assert path == "/workspace/output/report.md"
+
+
 # ============================================================================
 # AGENT TESTS
 # ============================================================================

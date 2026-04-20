@@ -168,7 +168,7 @@ def main():
     args = parser.parse_args()
 
     model = args.model or os.environ.get("MULTICA_MODEL", "gemini-2.5-flash")
-    max_turns = args.max_turns or int(os.environ.get("MULTICA_MAX_TURNS", "20"))
+    max_turns = args.max_turns if args.max_turns > 0 else int(os.environ.get("MULTICA_MAX_TURNS", "20"))
 
     print(f"[agent] task={args.task_id} model={model} max_turns={max_turns}", file=sys.stderr)
 

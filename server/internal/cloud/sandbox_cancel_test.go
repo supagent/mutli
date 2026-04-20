@@ -181,11 +181,6 @@ func TestSandboxStop_ConcurrentDrain(t *testing.T) {
 
 	sandbox := createTestSandbox(t, ctx)
 
-	googleKey := os.Getenv("GOOGLE_AI_API_KEY")
-	if googleKey == "" {
-		t.Skip("GOOGLE_AI_API_KEY required for agent execution")
-	}
-
 	// Run a long-running command to simulate agent execution
 	sessionID := fmt.Sprintf("tv6-%d", time.Now().UnixMilli())
 	handle, err := sandbox.Process.CreatePty(ctx, sessionID)

@@ -104,6 +104,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Inject auth token into sandbox manager so embedded agents can call the API.
+	if d.sandboxMgr != nil {
+		d.sandboxMgr.SetAgentToken(d.client.GetToken())
+	}
+
 	// Load and register watched workspaces.
 	if err := d.loadWatchedWorkspaces(ctx); err != nil {
 		return err

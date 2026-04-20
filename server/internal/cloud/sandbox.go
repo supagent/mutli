@@ -25,11 +25,12 @@ const (
 	defaultImageTimeout = 3 * time.Minute // Python + pip install google-adk (cached after first build)
 )
 
-// Embedded ADK agent Python files (compiled into the binary via go:embed in server/agent/embed.go).
+// Embedded ADK agent files (compiled into the binary via go:embed in server/agent/embed.go).
 var (
-	agentMainPy   = agentpy.MainPy
-	agentBridgePy = agentpy.BridgePy
-	agentToolsPy  = agentpy.ToolsPy
+	agentMainPy        = agentpy.MainPy
+	agentBridgePy      = agentpy.BridgePy
+	agentToolsPy       = agentpy.ToolsPy
+	agentRequirements  = agentpy.RequirementsTxt
 )
 
 // SandboxManager manages Daytona sandbox lifecycle for embedded agent execution.
@@ -56,6 +57,12 @@ func NewSandboxManager(cfg SandboxConfig, logger *slog.Logger) (*SandboxManager,
 	}
 
 	return &SandboxManager{cfg: cfg, client: client, logger: logger}, nil
+}
+
+// SetAgentToken updates the auth token used by embedded agents for API calls.
+// Called after daemon authentication resolves.
+func (sm *SandboxManager) SetAgentToken(token string) {
+	sm.cfg.AgentToken = token
 }
 
 // Close shuts down the Daytona client.
@@ -113,16 +120,11 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 
 	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Creating sandbox environment..."})
 
-	// Build sandbox image: Python + ADK (cached after first build — sub-second subsequent creates).
+	// Build sandbox image: Python + ADK deps from pinned requirements.txt.
+	// Image is cached by Daytona after first build — sub-second subsequent creates.
+	// Dependencies change only when requirements.txt is updated (rebuild on deploy).
 	image := daytona.DebianSlim(nil).
-		PipInstall([]string{
-			"google-adk>=1.31.0",
-			"google-genai>=1.0.0",
-			"httpx>=0.27.0",
-			"tenacity>=8.2.0",
-			"python-docx>=1.1.0",
-			"openpyxl>=3.1.0",
-		})
+		PipInstall(pipDepsFromRequirements())
 
 	imageTimeout := sm.cfg.ImageTimeout
 	if imageTimeout == 0 {
@@ -388,6 +390,20 @@ func drainNDJSON(ctx context.Context, dataCh <-chan []byte, msgCh chan<- agent.M
 // shellQuote wraps a string in single quotes for safe shell interpolation.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// pipDepsFromRequirements parses the embedded requirements.txt into a slice
+// of pip dependency strings for Daytona's PipInstall builder.
+func pipDepsFromRequirements() []string {
+	var deps []string
+	for _, line := range strings.Split(string(agentRequirements), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		deps = append(deps, line)
+	}
+	return deps
 }
 
 func trySendCloud(ch chan<- agent.Message, msg agent.Message) {

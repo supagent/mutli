@@ -12,3 +12,6 @@ var BridgePy []byte
 
 //go:embed tools.py
 var ToolsPy []byte
+
+//go:embed requirements.txt
+var RequirementsTxt []byte

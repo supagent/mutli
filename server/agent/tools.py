@@ -99,18 +99,33 @@ def add_comment(issue_id: str, content: str) -> dict:
 # ── Document tools ───────────────────────────────────────────────────────────
 
 
+def _safe_output_path(filename: str) -> tuple[str, dict | None]:
+    """Sanitize filename and return (full_path, error_dict_or_None).
+
+    Prevents path traversal by stripping directory components and rejecting
+    filenames with '..' sequences.
+    """
+    # Strip any directory components — only the base filename is used.
+    safe_name = os.path.basename(filename)
+    if not safe_name or safe_name in (".", "..") or ".." in safe_name:
+        return "", {"error": f"Invalid filename: {filename!r}"}
+    output_dir = "/workspace/output"
+    return os.path.join(output_dir, safe_name), None
+
+
 def create_document(filename: str, content: str) -> dict:
     """Create a document file in /workspace/output/. Supports .md, .txt formats.
 
     For .docx or .xlsx files, use create_docx or create_xlsx instead.
     """
-    output_dir = "/workspace/output"
+    filepath, err = _safe_output_path(filename)
+    if err:
+        return err
     try:
-        os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, filename)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, "w") as f:
             f.write(content)
-        return {"filename": filename, "path": filepath, "status": "created"}
+        return {"filename": os.path.basename(filepath), "path": filepath, "status": "created"}
     except Exception as e:
         return {"error": f"Failed to create document: {e}"}
 
@@ -118,17 +133,18 @@ def create_document(filename: str, content: str) -> dict:
 def create_docx(filename: str, content: str) -> dict:
     """Create a Word document (.docx) in /workspace/output/. Content is plain text
     that will be formatted as paragraphs."""
-    output_dir = "/workspace/output"
+    filepath, err = _safe_output_path(filename)
+    if err:
+        return err
     try:
-        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         from docx import Document
         doc = Document()
         for para in content.split("\n\n"):
             doc.add_paragraph(para.strip())
-        filepath = os.path.join(output_dir, filename)
         doc.save(filepath)
         size = os.path.getsize(filepath)
-        return {"filename": filename, "path": filepath, "size_bytes": size, "status": "created"}
+        return {"filename": os.path.basename(filepath), "path": filepath, "size_bytes": size, "status": "created"}
     except Exception as e:
         return {"error": f"Failed to create docx: {e}"}
 
@@ -139,9 +155,11 @@ def create_xlsx(filename: str, data_json: str) -> dict:
     data_json should be a JSON string with format:
     {"headers": ["Col1", "Col2"], "rows": [["val1", "val2"], ...]}
     """
-    output_dir = "/workspace/output"
+    filepath, err = _safe_output_path(filename)
+    if err:
+        return err
     try:
-        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         data = json.loads(data_json)
         from openpyxl import Workbook
         wb = Workbook()
@@ -150,10 +168,9 @@ def create_xlsx(filename: str, data_json: str) -> dict:
             ws.append(data["headers"])
         for row in data.get("rows", []):
             ws.append(row)
-        filepath = os.path.join(output_dir, filename)
         wb.save(filepath)
         size = os.path.getsize(filepath)
-        return {"filename": filename, "path": filepath, "size_bytes": size, "status": "created"}
+        return {"filename": os.path.basename(filepath), "path": filepath, "size_bytes": size, "status": "created"}
     except Exception as e:
         return {"error": f"Failed to create xlsx: {e}"}
 
