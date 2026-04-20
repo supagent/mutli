@@ -2,10 +2,26 @@ package cloud
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
+
+// ansiRe matches ANSI CSI sequences (e.g. \x1b[32m, \x1b[?2004l) and OSC sequences (e.g. \x1b]0;...\a).
+var ansiRe = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07]*\x07)`)
+
+// stripANSI removes all ANSI escape sequences from s.
+func stripANSI(s string) string {
+	return ansiRe.ReplaceAllString(s, "")
+}
+
+// normalizeLineEndings replaces \r\n with \n and strips trailing \r.
+func normalizeLineEndings(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.TrimRight(s, "\r")
+	return s
+}
 
 // ndEvent represents a single NDJSON event from the ADK agent bridge.
 type ndEvent struct {

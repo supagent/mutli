@@ -26,6 +26,9 @@ type ExecOptions struct {
 	MaxTurns        int
 	Timeout         time.Duration
 	ResumeSessionID string // if non-empty, resume a previous agent session
+	TaskID          string // task ID (for embedded agent)
+	IssueID         string // issue ID (for embedded agent)
+	WorkspaceID     string // workspace ID (for embedded agent API calls)
 }
 
 // Session represents a running agent execution.

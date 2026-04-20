@@ -2,7 +2,6 @@ package cloud
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -10,8 +9,8 @@ import (
 )
 
 // drainLineBuffer simulates the PTY line buffer logic by feeding chunks
-// through drainPTYData and collecting parsed messages.
-func drainLineBuffer(chunks []string) ([]agent.Message, string, string) {
+// through drainNDJSON and collecting parsed messages.
+func drainLineBuffer(chunks []string) ([]agent.Message, *agent.Result) {
 	msgCh := make(chan agent.Message, 256)
 	dataCh := make(chan []byte, len(chunks))
 	for _, c := range chunks {
@@ -19,20 +18,19 @@ func drainLineBuffer(chunks []string) ([]agent.Message, string, string) {
 	}
 	close(dataCh)
 
-	var textOutput, toolOutput strings.Builder
-	drainPTYData(context.Background(), dataCh, msgCh, &textOutput, &toolOutput)
+	result := drainNDJSON(context.Background(), dataCh, msgCh)
 	close(msgCh)
 
 	var msgs []agent.Message
 	for m := range msgCh {
 		msgs = append(msgs, m)
 	}
-	return msgs, textOutput.String(), toolOutput.String()
+	return msgs, result
 }
 
-func TestLineBuffer_SingleComplete(t *testing.T) {
-	msgs, output, _ := drainLineBuffer([]string{
-		"{\"type\": \"assistant_delta\", \"text\": \"Hello\"}\n",
+func TestDrainNDJSON_SingleComplete(t *testing.T) {
+	msgs, _ := drainLineBuffer([]string{
+		`{"type":"text","seq":1,"content":"Hello"}` + "\n",
 	})
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
@@ -40,15 +38,12 @@ func TestLineBuffer_SingleComplete(t *testing.T) {
 	if msgs[0].Type != agent.MessageText || msgs[0].Content != "Hello" {
 		t.Errorf("unexpected message: %+v", msgs[0])
 	}
-	if output != "Hello" {
-		t.Errorf("expected output 'Hello', got %q", output)
-	}
 }
 
-func TestLineBuffer_SplitAcrossChunks(t *testing.T) {
-	msgs, _, _ := drainLineBuffer([]string{
-		"{\"type\": \"assistant_del",
-		"ta\", \"text\": \"Split\"}\n",
+func TestDrainNDJSON_SplitAcrossChunks(t *testing.T) {
+	msgs, _ := drainLineBuffer([]string{
+		`{"type":"tex`,
+		`t","seq":1,"content":"Split"}` + "\n",
 	})
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
@@ -58,9 +53,9 @@ func TestLineBuffer_SplitAcrossChunks(t *testing.T) {
 	}
 }
 
-func TestLineBuffer_MultipleInOneChunk(t *testing.T) {
-	msgs, output, _ := drainLineBuffer([]string{
-		"{\"type\": \"assistant_delta\", \"text\": \"A\"}\n{\"type\": \"assistant_delta\", \"text\": \"B\"}\n",
+func TestDrainNDJSON_MultipleInOneChunk(t *testing.T) {
+	msgs, _ := drainLineBuffer([]string{
+		`{"type":"text","seq":1,"content":"A"}` + "\n" + `{"type":"text","seq":2,"content":"B"}` + "\n",
 	})
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(msgs))
@@ -68,14 +63,11 @@ func TestLineBuffer_MultipleInOneChunk(t *testing.T) {
 	if msgs[0].Content != "A" || msgs[1].Content != "B" {
 		t.Errorf("unexpected messages: %+v, %+v", msgs[0], msgs[1])
 	}
-	if output != "AB" {
-		t.Errorf("expected output 'AB', got %q", output)
-	}
 }
 
-func TestLineBuffer_ANSIWrapped(t *testing.T) {
-	msgs, _, _ := drainLineBuffer([]string{
-		"\x1b[?2004l\r{\"type\": \"assistant_delta\", \"text\": \"4\"}\r\n",
+func TestDrainNDJSON_ANSIWrapped(t *testing.T) {
+	msgs, _ := drainLineBuffer([]string{
+		"\x1b[?2004l\r" + `{"type":"text","seq":1,"content":"4"}` + "\r\n",
 	})
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
@@ -85,11 +77,11 @@ func TestLineBuffer_ANSIWrapped(t *testing.T) {
 	}
 }
 
-func TestLineBuffer_NonJSONSkipped(t *testing.T) {
-	msgs, _, _ := drainLineBuffer([]string{
+func TestDrainNDJSON_NonJSONSkipped(t *testing.T) {
+	msgs, _ := drainLineBuffer([]string{
 		"root@sandbox:~# \n",
-		"oh -p \"hello\" --output-format stream-json\n",
-		"{\"type\": \"assistant_delta\", \"text\": \"Hi\"}\n",
+		"python3 agent.py --task-id test\n",
+		`{"type":"text","seq":1,"content":"Hi"}` + "\n",
 		"exit\n",
 	})
 	if len(msgs) != 1 {
@@ -100,11 +92,11 @@ func TestLineBuffer_NonJSONSkipped(t *testing.T) {
 	}
 }
 
-func TestLineBuffer_EmptyChunks(t *testing.T) {
-	msgs, _, _ := drainLineBuffer([]string{
+func TestDrainNDJSON_EmptyChunks(t *testing.T) {
+	msgs, _ := drainLineBuffer([]string{
 		"",
 		"",
-		"{\"type\": \"assistant_delta\", \"text\": \"Ok\"}\n",
+		`{"type":"text","seq":1,"content":"Ok"}` + "\n",
 		"",
 	})
 	if len(msgs) != 1 {
@@ -112,9 +104,9 @@ func TestLineBuffer_EmptyChunks(t *testing.T) {
 	}
 }
 
-func TestLineBuffer_FlushRemaining(t *testing.T) {
-	msgs, _, _ := drainLineBuffer([]string{
-		"{\"type\": \"assistant_delta\", \"text\": \"Partial\"}",
+func TestDrainNDJSON_FlushRemaining(t *testing.T) {
+	msgs, _ := drainLineBuffer([]string{
+		`{"type":"text","seq":1,"content":"Partial"}`,
 	})
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message from flush, got %d", len(msgs))
@@ -124,30 +116,25 @@ func TestLineBuffer_FlushRemaining(t *testing.T) {
 	}
 }
 
-func TestLineBuffer_ContextCancellation(t *testing.T) {
+func TestDrainNDJSON_ContextCancellation(t *testing.T) {
 	msgCh := make(chan agent.Message, 256)
 	dataCh := make(chan []byte, 10)
 
-	// Buffer a message BEFORE creating context so it's available on first select
-	dataCh <- []byte("{\"type\": \"assistant_delta\", \"text\": \"Before\"}\n")
+	dataCh <- []byte(`{"type":"text","seq":1,"content":"Before"}` + "\n")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately — drainPTYData should still not hang
+	cancel()
 
-	var textOutput, toolOutput strings.Builder
 	done := make(chan struct{})
 	go func() {
-		drainPTYData(ctx, dataCh, msgCh, &textOutput, &toolOutput)
+		drainNDJSON(ctx, dataCh, msgCh)
 		close(done)
 	}()
 
-	// Must complete within 5 seconds (the post-cancel drain waits up to 2s
-	// for late-arriving data before returning, so we allow headroom).
 	select {
 	case <-done:
-		// good
 	case <-time.After(5 * time.Second):
-		t.Fatal("drainPTYData hung after context cancellation")
+		t.Fatal("drainNDJSON hung after context cancellation")
 	}
 	close(msgCh)
 
@@ -156,76 +143,73 @@ func TestLineBuffer_ContextCancellation(t *testing.T) {
 		msgs = append(msgs, m)
 	}
 	t.Logf("got %d messages after context cancel", len(msgs))
-	// With cancelled context, drainPTYData may or may not process the buffered
-	// message (depends on select ordering). The key assertion is it doesn't hang.
 }
 
-func TestLineBuffer_OutputAccumulation(t *testing.T) {
-	msgs, output, _ := drainLineBuffer([]string{
-		"{\"type\": \"assistant_delta\", \"text\": \"Part 1\"}\n",
-		"{\"type\": \"tool_started\", \"tool_name\": \"web_search\", \"tool_input\": {\"query\": \"test\"}}\n",
-		"{\"type\": \"assistant_delta\", \"text\": \" Part 2\"}\n",
-	})
-	if len(msgs) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(msgs))
-	}
-	// Output should only contain text messages, not tool events
-	if output != "Part 1 Part 2" {
-		t.Errorf("expected output 'Part 1 Part 2', got %q", output)
-	}
-}
-
-func TestLineBuffer_ToolOutputFallback(t *testing.T) {
-	// When no text messages exist, tool output should be collected as fallback
-	msgs, textOutput, toolOutput := drainLineBuffer([]string{
-		"{\"type\": \"tool_started\", \"tool_name\": \"web_search\", \"tool_input\": {\"query\": \"test\"}}\n",
-		"{\"type\": \"tool_completed\", \"tool_name\": \"web_search\", \"output\": \"Result: found 5 items\", \"is_error\": false}\n",
-		"{\"type\": \"tool_started\", \"tool_name\": \"web_fetch\", \"tool_input\": {\"url\": \"https://example.com\"}}\n",
-		"{\"type\": \"tool_completed\", \"tool_name\": \"web_fetch\", \"output\": \"Page content here\", \"is_error\": false}\n",
+func TestDrainNDJSON_ToolEvents(t *testing.T) {
+	msgs, _ := drainLineBuffer([]string{
+		`{"type":"text","seq":1,"content":"Part 1"}` + "\n",
+		`{"type":"tool_use","seq":2,"tool":"get_issue","input":{"issue_id":"ISS-1"}}` + "\n",
+		`{"type":"tool_result","seq":3,"tool":"get_issue","output":"data"}` + "\n",
+		`{"type":"text","seq":4,"content":"Part 2"}` + "\n",
 	})
 	if len(msgs) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(msgs))
 	}
-	// No text output (no assistant_delta/complete events)
-	if textOutput != "" {
-		t.Errorf("expected empty text output, got %q", textOutput)
+	if msgs[0].Type != agent.MessageText {
+		t.Errorf("msg 0 type = %s, want text", msgs[0].Type)
 	}
-	// Tool output should contain both results
-	if !strings.Contains(toolOutput, "Result: found 5 items") {
-		t.Errorf("tool output missing first result: %q", toolOutput)
+	if msgs[1].Type != agent.MessageToolUse || msgs[1].Tool != "get_issue" {
+		t.Errorf("msg 1: %+v", msgs[1])
 	}
-	if !strings.Contains(toolOutput, "Page content here") {
-		t.Errorf("tool output missing second result: %q", toolOutput)
+	if msgs[2].Type != agent.MessageToolResult || msgs[2].Tool != "get_issue" {
+		t.Errorf("msg 2: %+v", msgs[2])
 	}
 }
 
-// TV3: Verify drainPTYData recovers buffered messages after context cancellation.
-// When sandbox.Stop() closes DataChan and the context is cancelled, we must
-// still drain remaining buffered data before returning.
-func TestLineBuffer_DrainAfterCancel(t *testing.T) {
+func TestDrainNDJSON_ResultEvent(t *testing.T) {
+	msgs, result := drainLineBuffer([]string{
+		`{"type":"text","seq":1,"content":"Hello"}` + "\n",
+		`{"type":"result","status":"completed","output":"Hello","usage":{"gemini-2.5-flash":{"input_tokens":100,"output_tokens":50}}}` + "\n",
+	})
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message (result not sent to msgCh), got %d", len(msgs))
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Status != "completed" {
+		t.Errorf("result status = %q, want completed", result.Status)
+	}
+	if result.Output != "Hello" {
+		t.Errorf("result output = %q, want Hello", result.Output)
+	}
+	if result.Usage == nil || result.Usage["gemini-2.5-flash"].InputTokens != 100 {
+		t.Errorf("unexpected usage: %+v", result.Usage)
+	}
+}
+
+func TestDrainNDJSON_DrainAfterCancel(t *testing.T) {
 	msgCh := make(chan agent.Message, 256)
 	dataCh := make(chan []byte, 10)
 
-	// Buffer 3 complete messages before cancel
-	dataCh <- []byte("{\"type\": \"assistant_delta\", \"text\": \"One\"}\n")
-	dataCh <- []byte("{\"type\": \"assistant_delta\", \"text\": \"Two\"}\n")
-	dataCh <- []byte("{\"type\": \"assistant_delta\", \"text\": \"Three\"}\n")
-	close(dataCh) // simulate sandbox.Stop() closing the PTY DataChan
+	dataCh <- []byte(`{"type":"text","seq":1,"content":"One"}` + "\n")
+	dataCh <- []byte(`{"type":"text","seq":2,"content":"Two"}` + "\n")
+	dataCh <- []byte(`{"type":"text","seq":3,"content":"Three"}` + "\n")
+	close(dataCh)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel context — simulates daemon cancel-poll
+	cancel()
 
-	var textOutput, toolOutput strings.Builder
 	done := make(chan struct{})
 	go func() {
-		drainPTYData(ctx, dataCh, msgCh, &textOutput, &toolOutput)
+		drainNDJSON(ctx, dataCh, msgCh)
 		close(done)
 	}()
 
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("drainPTYData hung after context cancellation")
+		t.Fatal("drainNDJSON hung after context cancellation")
 	}
 	close(msgCh)
 
@@ -234,15 +218,11 @@ func TestLineBuffer_DrainAfterCancel(t *testing.T) {
 		msgs = append(msgs, m)
 	}
 
-	// All 3 buffered messages must be recovered even with cancelled context
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages from buffer drain, got %d", len(msgs))
 	}
 	if msgs[0].Content != "One" || msgs[1].Content != "Two" || msgs[2].Content != "Three" {
 		t.Errorf("unexpected messages: %+v", msgs)
-	}
-	if textOutput.String() != "OneTwoThree" {
-		t.Errorf("expected text output 'OneTwoThree', got %q", textOutput.String())
 	}
 }
 
@@ -305,47 +285,6 @@ func TestExtractArtifacts_Constants(t *testing.T) {
 	}
 }
 
-func TestBuildEntrypointScript_ContainsGemini(t *testing.T) {
-	script := buildEntrypointScript("test prompt", "auto-fastest", 10, "", "test-api-key")
-	if !strings.Contains(script, "gemini-2.5-flash") {
-		t.Error("entrypoint script should contain gemini-2.5-flash model")
-	}
-	if !strings.Contains(script, "generativelanguage.googleapis.com") {
-		t.Error("entrypoint script should contain Google AI Studio base URL")
-	}
-	if !strings.Contains(script, "test-api-key") {
-		t.Error("entrypoint script should contain the injected API key")
-	}
-	if !strings.Contains(script, "--output-format stream-json") {
-		t.Error("entrypoint script should pass --output-format stream-json to oh")
-	}
-	if !strings.Contains(script, "--api-format openai") {
-		t.Error("entrypoint script should pass --api-format openai to oh")
-	}
-	// Verify write_file compliance instructions are in the prompt
-	if !strings.Contains(script, "MUST be write_file") {
-		t.Error("entrypoint script should contain write_file compliance instruction")
-	}
-	// Verify search proxy is started
-	if !strings.Contains(script, "search-proxy.py") {
-		t.Error("entrypoint script should start the search proxy")
-	}
-	if !strings.Contains(script, "localhost:8888") {
-		t.Error("entrypoint script should reference search proxy URL")
-	}
-}
-
-func TestBuildEntrypointScript_NoAPIKey(t *testing.T) {
-	script := buildEntrypointScript("test prompt", "auto-fastest", 10, "", "")
-	// With no API key, OPENAI_API_KEY should be empty (OH will fail at startup)
-	if !strings.Contains(script, `OPENAI_API_KEY=''`) {
-		t.Error("entrypoint script without API key should have empty OPENAI_API_KEY")
-	}
-	// Should still reference Gemini base URL (just with empty key)
-	if !strings.Contains(script, "generativelanguage.googleapis.com") {
-		t.Error("entrypoint script should always contain Google AI Studio base URL")
-	}
-}
 
 // ---------------------------------------------------------------------------
 // sanitizeFilename tests
@@ -418,13 +357,6 @@ func TestIsAllowedFileType(t *testing.T) {
 				t.Errorf("isAllowedFileType(%q) = %v, want %v", tt.filename, got, tt.allowed)
 			}
 		})
-	}
-}
-
-func TestBuildEntrypointScript_SystemPrompt(t *testing.T) {
-	script := buildEntrypointScript("test prompt", "auto-fastest", 10, "Be helpful", "key")
-	if !strings.Contains(script, "ADDITIONAL INSTRUCTIONS: Be helpful") {
-		t.Error("entrypoint script should include system prompt")
 	}
 }
 

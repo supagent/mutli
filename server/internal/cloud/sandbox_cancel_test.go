@@ -183,10 +183,10 @@ func TestSandboxStop_ConcurrentDrain(t *testing.T) {
 
 	googleKey := os.Getenv("GOOGLE_AI_API_KEY")
 	if googleKey == "" {
-		t.Skip("GOOGLE_AI_API_KEY required for OH execution")
+		t.Skip("GOOGLE_AI_API_KEY required for agent execution")
 	}
 
-	// Start OH with a multi-turn prompt that takes a while
+	// Run a long-running command to simulate agent execution
 	sessionID := fmt.Sprintf("tv6-%d", time.Now().UnixMilli())
 	handle, err := sandbox.Process.CreatePty(ctx, sessionID)
 	if err != nil {
@@ -196,8 +196,8 @@ func TestSandboxStop_ConcurrentDrain(t *testing.T) {
 		t.Fatalf("WaitForConnection: %v", err)
 	}
 
-	cmd := fmt.Sprintf(`oh -p "Search for 10 different topics and write a long report" --output-format stream-json --api-format openai --base-url "%s" --api-key "%s" --model "%s" --max-turns 5 --permission-mode full_auto --bare 2>/dev/null`,
-		fallbackBaseURL, googleKey, fallbackModel)
+	// Emit NDJSON lines slowly to simulate a running agent
+	cmd := `for i in 1 2 3 4 5; do echo "{\"type\":\"text\",\"seq\":$i,\"content\":\"step $i\"}"; sleep 2; done`
 	if _, err := handle.Write([]byte(cmd + "\n")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -228,7 +228,6 @@ func TestSandboxStop_ConcurrentDrain(t *testing.T) {
 	// Now simulate the cancel flow: Stop + drain concurrently
 	runCtx, runCancel := context.WithCancel(ctx)
 	msgCh := make(chan agent.Message, 256)
-	var textOutput, toolOutput strings.Builder
 
 	var wg sync.WaitGroup
 
@@ -236,7 +235,7 @@ func TestSandboxStop_ConcurrentDrain(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		drainPTYData(runCtx, teeCh, msgCh, &textOutput, &toolOutput)
+		drainNDJSON(runCtx, teeCh, msgCh)
 		close(msgCh)
 	}()
 
