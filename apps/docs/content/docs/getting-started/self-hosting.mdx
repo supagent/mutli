@@ -25,7 +25,7 @@ Two commands to set up everything:
 
 ```bash
 # Install CLI + provision self-host server
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
+curl -fsSL https://raw.githubusercontent.com/supagent/mutli/main/scripts/install.sh | bash -s -- --with-server
 
 # Configure CLI, authenticate, and start the daemon
 multica setup self-host
@@ -42,7 +42,7 @@ For a step-by-step setup, see below.
 ### Step 1 — Start the Server
 
 ```bash
-git clone https://github.com/multica-ai/multica.git
+git clone https://github.com/supagent/mutli.git multica
 cd multica
 make selfhost
 ```
@@ -73,7 +73,7 @@ The daemon runs on your local machine (not inside Docker). It detects installed 
 ### a) Install the CLI and an AI agent
 
 ```bash
-brew tap multica-ai/tap
+brew tap supagent/multi-cli
 brew install multica
 ```
 

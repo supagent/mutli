@@ -17,7 +17,7 @@ const CLOUD_HOST = "multica.ai";
 
 const INSTALL_STEP = {
   label: "Install the Multica CLI",
-  cmd: "curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash",
+  cmd: "brew tap supagent/multi-cli && brew install multica",
 };
 
 function isCloudEnvironment(): boolean {

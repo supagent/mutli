@@ -8,14 +8,14 @@ description: Install the Multica CLI and start the agent daemon.
 ### Homebrew (macOS/Linux)
 
 ```bash
-brew tap multica-ai/tap
+brew tap supagent/multi-cli
 brew install multica
 ```
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/multica-ai/multica.git
+git clone https://github.com/supagent/mutli.git multica
 cd multica
 make build
 cp server/bin/multica /usr/local/bin/multica
@@ -35,11 +35,11 @@ if [ "$ARCH" = "x86_64" ]; then
 fi
 
 # Get the latest release tag from GitHub
-LATEST=$(curl -sI https://github.com/multica-ai/multica/releases/latest \
+LATEST=$(curl -sI https://github.com/supagent/mutli/releases/latest \
   | grep -i '^location:' | sed 's/.*tag\///' | tr -d '\r\n')
 
 # Download and extract
-curl -sL "https://github.com/multica-ai/multica/releases/download/${LATEST}/multica_${OS}_${ARCH}.tar.gz" \
+curl -sL "https://github.com/supagent/mutli/releases/download/${LATEST}/multica_${OS}_${ARCH}.tar.gz" \
   -o /tmp/multica.tar.gz
 tar -xzf /tmp/multica.tar.gz -C /tmp multica
 sudo mv /tmp/multica /usr/local/bin/multica
