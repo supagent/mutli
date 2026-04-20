@@ -144,8 +144,11 @@ async def main():
             has_interleaving = True
             break
 
-    if not has_interleaving:
-        print("WARN: Events are not interleaved (all same type)")
+    if has_interleaving:
+        print("PASS: Events are interleaved (tool and text events mixed)")
+    else:
+        print("FAIL: Events are not interleaved (all same type)")
+        passed = False
 
     if passed:
         print("\nPASS: Streaming tool calls work correctly")

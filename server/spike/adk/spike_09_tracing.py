@@ -118,7 +118,7 @@ async def main():
 
     # ── Validation ────────────────────────────────────────────────────────────
 
-    print(f"\n── Results ──")
+    print("\n── Results ──")
     print(f"  Spans collected: {len(collected_spans)}")
 
     for span in collected_spans:

@@ -7,7 +7,6 @@ and model errors without crashing.
 Pass criteria:
   - Tool exception → error fed back as tool result, agent self-corrects
   - Max turns limit → clean exit with last state
-  - Malformed tool args → framework handles gracefully
   - No crashes in any scenario
 """
 
@@ -44,7 +43,11 @@ def reliable_tool(item: str) -> dict:
 
 def infinite_loop_tool(step: str) -> dict:
     """Process a step. Always suggests more steps to do."""
-    return {"step": step, "result": "Step completed", "next_step": f"Now do step {int(step or '0') + 1}"}
+    try:
+        step_num = int(step) if step else 0
+    except (ValueError, TypeError):
+        step_num = 0
+    return {"step": step, "result": "Step completed", "next_step": f"Now do step {step_num + 1}"}
 
 
 # ── Test scenarios ────────────────────────────────────────────────────────────
@@ -112,11 +115,11 @@ async def test_tool_error_recovery():
             print("PASS: Agent retried after tool failure")
             return True
         elif call_count["failing_tool"] == 1 and texts:
-            print("PASS: Agent handled tool failure and responded (may not have retried)")
+            print("PASS: Agent handled tool failure gracefully and responded")
             return True
         else:
-            print(f"WARN: failing_tool called {call_count['failing_tool']} times")
-            return True  # Didn't crash — that's the main criterion
+            print(f"FAIL: failing_tool called {call_count['failing_tool']} times, no text response — no recovery observed")
+            return False
 
     except Exception as e:
         print(f"FAIL: Agent crashed on tool error: {e}")

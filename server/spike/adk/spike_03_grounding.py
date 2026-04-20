@@ -133,15 +133,14 @@ async def main():
         print("      This may be a known issue (github.com/google/adk-python/issues/1693).")
         print("      Checking if response text contains search-like content...")
 
-        # Even without metadata, check if the response has real search content
-        has_urls = "http" in text_response.lower()
+        # Without grounding metadata, this spike fails — the whole point is to validate metadata.
         has_specific_data = any(word in text_response.lower() for word in ["pricing", "per user", "per month", "free plan"])
 
         if has_specific_data:
-            print("PARTIAL PASS: Response contains search-derived content but metadata missing")
+            print("FAIL: Response contains search-derived content but grounding metadata is missing")
         else:
-            print("FAIL: No grounding evidence in response")
-            passed = False
+            print("FAIL: No grounding metadata and no search-derived content")
+        passed = False
 
     if passed:
         print("\nPASS: Grounding with citations works")

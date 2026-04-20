@@ -48,15 +48,16 @@ def before_tool_callback(tool, args, tool_context):
     # After the first research call, we want to steer the agent
     # to focus on a specific aspect
     if tool.name == "research_topic" and len(research_topics) >= 1 and not steering_applied:
-        steering_applied = True
         print(f"  [STEERING] Intercepted research_topic call. Modifying args to focus on pricing.")
         # Modify the args to steer toward pricing
-        if "args" in dir(args) or isinstance(args, dict):
-            original = args.get("topic", "") if isinstance(args, dict) else getattr(args, "topic", "")
+        if isinstance(args, dict):
+            original = args.get("topic", "")
             new_topic = f"{original} - specifically pricing and cost comparison"
-            if isinstance(args, dict):
-                args["topic"] = new_topic
+            args["topic"] = new_topic
+            steering_applied = True
             print(f"  [STEERING] Redirected: '{original}' → '{new_topic}'")
+        else:
+            print(f"  [STEERING] Cannot mutate args of type {type(args).__name__} — steering not applied")
 
     return None  # Return None to continue execution, return content to skip tool
 
@@ -127,21 +128,25 @@ async def main():
     if len(tool_calls) >= 2:
         print(f"PASS: Agent made {len(tool_calls)} tool calls")
     else:
-        print(f"WARN: Only {len(tool_calls)} tool calls — agent may not have researched multiple topics")
+        print(f"FAIL: Only {len(tool_calls)} tool calls — agent did not research multiple topics")
+        passed = False
 
     if steering_applied:
         print("PASS: Steering callback was triggered and applied")
     else:
-        print("WARN: Steering callback was not triggered (agent may not have made enough research calls)")
+        print("FAIL: Steering callback was not triggered")
+        passed = False
 
     # Check if any research topic mentions pricing (steered topic)
     pricing_topics = [t for t in research_topics if "pricing" in t.lower()]
     if pricing_topics:
         print(f"PASS: Steering successfully redirected research to pricing: {pricing_topics}")
     elif steering_applied:
+        # Steering fired but arg mutation didn't stick — callback may not support it
         print("WARN: Steering was applied but research topic was not modified (callback may not support arg mutation)")
     else:
-        print("INFO: No pricing-focused research (steering not triggered)")
+        print("FAIL: No pricing-focused research (steering not triggered)")
+        passed = False
 
     if passed:
         print("\nPASS: Mid-loop steering works (via callbacks)")

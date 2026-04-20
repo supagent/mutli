@@ -144,21 +144,16 @@ async def main():
 
     # Check parallelism: if sequential, wall time >= 3s (3 x 1s sleep).
     # If parallel, wall time should be ~1s + LLM overhead.
-    # We use 2.5s as the threshold — generous enough for LLM latency.
     if len(TOOL_CALL_TIMES) == 3:
-        if wall_time < 2.5 + 5:  # 2.5s tool time + 5s LLM overhead
-            # More precise check: sum of tool times vs wall time
-            tool_total = sum(TOOL_CALL_TIMES.values())
-            if tool_total > wall_time * 0.9:
-                # Tools took longer than wall time — they WERE parallel
-                print(f"PASS: Tools executed in parallel (tool_total={tool_total:.1f}s > wall_time implies concurrency)")
-            else:
-                print(f"INFO: Tool total={tool_total:.1f}s, wall={wall_time:.1f}s — checking overlap")
-
-            # Check if tools overlapped in time
-            print("PASS: Wall time suggests parallel execution")
+        tool_total = sum(TOOL_CALL_TIMES.values())
+        if tool_total > wall_time * 0.9:
+            # Sum of individual tool times exceeds wall time — they overlapped (parallel)
+            print(f"PASS: Tools executed in parallel (tool_total={tool_total:.1f}s > wall_time={wall_time:.1f}s implies concurrency)")
+        elif wall_time < tool_total * 0.8:
+            print(f"PASS: Wall time {wall_time:.1f}s significantly less than sequential total {tool_total:.1f}s — parallel confirmed")
         else:
-            print(f"WARN: Wall time {wall_time}s is high — tools may have run sequentially")
+            print(f"FAIL: Tools appear sequential (wall_time={wall_time:.1f}s, tool_total={tool_total:.1f}s)")
+            passed = False
 
     if not text_response:
         print("FAIL: No text response (comparison table)")

@@ -118,7 +118,7 @@ async def main():
 
     # ── Validation ────────────────────────────────────────────────────────────
 
-    print(f"\n── Results ──")
+    print("\n── Results ──")
     print(f"  Tool calls:   {tool_calls}")
     print(f"  Text parts:   {len(text_parts)}")
 

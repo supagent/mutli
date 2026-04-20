@@ -15,7 +15,14 @@ fi
 # Load API key from project .env if not already set
 if [ -z "${GOOGLE_API_KEY:-}" ]; then
     if [ -f "../../../.env" ]; then
-        export GOOGLE_API_KEY="$(grep GOOGLE_AI_API_KEY ../../../.env | cut -d= -f2)"
+        # Try GOOGLE_API_KEY first, then fall back to GOOGLE_AI_API_KEY
+        KEY="$(grep -m1 '^GOOGLE_API_KEY=' ../../../.env | cut -d= -f2- || true)"
+        if [ -z "$KEY" ]; then
+            KEY="$(grep -m1 '^GOOGLE_AI_API_KEY=' ../../../.env | cut -d= -f2- || true)"
+        fi
+        if [ -n "$KEY" ]; then
+            export GOOGLE_API_KEY="$KEY"
+        fi
     fi
 fi
 

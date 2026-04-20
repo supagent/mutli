@@ -69,6 +69,11 @@ async def main():
         "Get information on Kubernetes adoption",
         "Research serverless architecture patterns",
         "Look up database comparison PostgreSQL vs MySQL",
+        "Research container orchestration tools",
+        "Look up edge computing market data",
+        "Get information on GraphQL adoption rates",
+        "Research WebAssembly use cases",
+        "Look up CI/CD pipeline best practices",
     ]
 
     token_counts = []
@@ -102,7 +107,7 @@ async def main():
 
     # ── Show growth ───────────────────────────────────────────────────────────
 
-    print(f"\n── Token Growth ──")
+    print("\n── Token Growth ──")
     for i, tc in enumerate(token_counts):
         bar = "█" * (tc // 100) if tc > 0 else "?"
         print(f"  Turn {i + 1}: {tc:>6} tokens {bar}")
@@ -118,7 +123,7 @@ async def main():
     # We can't directly mutate them, but we CAN create a new session
     # with a compacted history.
 
-    print(f"\n── Compaction Test ──")
+    print("\n── Compaction Test ──")
 
     # Create a new session with a "summary" of previous work
     summary = (
@@ -164,7 +169,8 @@ async def main():
     if len(token_counts) >= 2 and token_counts[-1] > token_counts[0]:
         print(f"PASS: Tokens grew from {token_counts[0]} to {token_counts[-1]}")
     else:
-        print("WARN: Token growth not observed (usage tracking may be inconsistent)")
+        print("FAIL: Token growth not observed — context window not filling up")
+        passed = False
 
     # Compacted session should use fewer tokens
     if compacted_tokens > 0 and token_counts[-1] > 0:
@@ -172,7 +178,8 @@ async def main():
             savings = round((1 - compacted_tokens / token_counts[-1]) * 100, 1)
             print(f"PASS: Compaction saved {savings}% tokens ({token_counts[-1]} → {compacted_tokens})")
         else:
-            print("WARN: Compaction did not reduce tokens (may need longer conversations)")
+            print("FAIL: Compaction did not reduce tokens")
+            passed = False
 
     # Agent should respond coherently to the summary
     if response_text and len(response_text) > 20:

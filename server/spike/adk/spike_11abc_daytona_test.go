@@ -14,6 +14,7 @@ import (
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/options"
 )
 
 // ─── Spike 11a: Fresh pip install baseline ───────────────────────────────────
@@ -40,13 +41,14 @@ func TestDaytonaFreshInstall(t *testing.T) {
 	t.Log("Creating sandbox...")
 	sandboxStart := time.Now()
 
-	sandbox, err := client.CreateSandbox(ctx, image, nil)
+	sandbox, err := client.Create(ctx, types.ImageParams{Image: image},
+		options.WithTimeout(8*time.Minute))
 	if err != nil {
-		t.Fatalf("CreateSandbox: %v", err)
+		t.Fatalf("Create sandbox: %v", err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		sandbox.Delete(context.Background())
-	}()
+	})
 
 	createTime := time.Since(sandboxStart)
 	t.Logf("Sandbox created in %s", createTime)
@@ -55,21 +57,21 @@ func TestDaytonaFreshInstall(t *testing.T) {
 	t.Log("Installing google-adk...")
 	pipStart := time.Now()
 
-	output, err := sandbox.Exec(ctx, "pip install --break-system-packages google-adk 2>&1 | tail -3", nil, nil)
+	result, err := sandbox.Process.ExecuteCommand(ctx, "pip install --break-system-packages google-adk 2>&1 | tail -3")
 	if err != nil {
 		t.Fatalf("pip install failed: %v", err)
 	}
 	pipTime := time.Since(pipStart)
 	t.Logf("pip install completed in %s", pipTime)
-	t.Logf("pip output: %s", output)
+	t.Logf("pip output: %s", result.Result)
 
 	// Verify ADK is importable
-	verifyOutput, err := sandbox.Exec(ctx, `python3 -c "import google.adk; print('ADK OK')"`, nil, nil)
+	verifyResult, err := sandbox.Process.ExecuteCommand(ctx, `python3 -c "import google.adk; print('ADK OK')"`)
 	if err != nil {
 		t.Fatalf("ADK import failed: %v", err)
 	}
-	if !strings.Contains(verifyOutput, "ADK OK") {
-		t.Fatalf("ADK import verification failed: %s", verifyOutput)
+	if !strings.Contains(verifyResult.Result, "ADK OK") {
+		t.Fatalf("ADK import verification failed: %s", verifyResult.Result)
 	}
 
 	totalTime := time.Since(sandboxStart)
@@ -110,13 +112,18 @@ func TestDaytonaNetworkReachability(t *testing.T) {
 		AptGet([]string{"python3", "python3-pip", "python3-venv", "curl"}).
 		Run("pip install --break-system-packages google-genai")
 
-	sandbox, err := client.CreateSandbox(ctx, image, nil)
+	envVars := map[string]string{"GOOGLE_API_KEY": geminiKey}
+
+	sandbox, err := client.Create(ctx, types.ImageParams{
+		SandboxBaseParams: types.SandboxBaseParams{EnvVars: envVars},
+		Image:             image,
+	}, options.WithTimeout(8*time.Minute))
 	if err != nil {
-		t.Fatalf("CreateSandbox: %v", err)
+		t.Fatalf("Create sandbox: %v", err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		sandbox.Delete(context.Background())
-	}()
+	})
 
 	// Test 1: Gemini API reachability
 	t.Log("Testing Gemini API reachability...")
@@ -124,11 +131,11 @@ func TestDaytonaNetworkReachability(t *testing.T) {
 		`curl -s -o /dev/null -w "%%{http_code}" "https://generativelanguage.googleapis.com/v1beta/models?key=%s"`,
 		geminiKey,
 	)
-	httpCode, err := sandbox.Exec(ctx, geminiTest, nil, nil)
+	result, err := sandbox.Process.ExecuteCommand(ctx, geminiTest)
 	if err != nil {
 		t.Errorf("Gemini API test failed: %v", err)
 	} else {
-		httpCode = strings.TrimSpace(httpCode)
+		httpCode := strings.TrimSpace(result.Result)
 		if httpCode == "200" {
 			t.Log("PASS: Gemini API reachable (200)")
 		} else {
@@ -139,32 +146,29 @@ func TestDaytonaNetworkReachability(t *testing.T) {
 	// Test 2: Google Search (for grounding)
 	t.Log("Testing Google Search reachability...")
 	searchTest := `curl -s -o /dev/null -w "%{http_code}" "https://www.google.com/search?q=test" -H "User-Agent: Mozilla/5.0"`
-	searchCode, err := sandbox.Exec(ctx, searchTest, nil, nil)
+	result, err = sandbox.Process.ExecuteCommand(ctx, searchTest)
 	if err != nil {
 		t.Logf("WARN: Google Search test failed: %v (grounding may use a different endpoint)", err)
 	} else {
-		searchCode = strings.TrimSpace(searchCode)
-		t.Logf("Google Search returned: %s", searchCode)
+		t.Logf("Google Search returned: %s", strings.TrimSpace(result.Result))
 	}
 
 	// Test 3: Actual Gemini API call with google-genai
 	t.Log("Testing actual Gemini API call from sandbox...")
-	pythonTest := fmt.Sprintf(`python3 -c "
-import os
-os.environ['GOOGLE_API_KEY'] = '%s'
+	pythonTest := `python3 -c "
 from google import genai
 client = genai.Client()
 resp = client.models.generate_content(model='gemini-2.5-flash', contents='Say hello in one word')
 print('GEMINI_OK:', resp.text[:50])
-"`, geminiKey)
+"`
 
-	geminiOutput, err := sandbox.Exec(ctx, pythonTest, nil, nil)
+	result, err = sandbox.Process.ExecuteCommand(ctx, pythonTest)
 	if err != nil {
 		t.Errorf("FAIL: Gemini API call from sandbox failed: %v", err)
-	} else if strings.Contains(geminiOutput, "GEMINI_OK") {
-		t.Logf("PASS: Gemini API call succeeded: %s", strings.TrimSpace(geminiOutput))
+	} else if strings.Contains(result.Result, "GEMINI_OK") {
+		t.Logf("PASS: Gemini API call succeeded: %s", strings.TrimSpace(result.Result))
 	} else {
-		t.Errorf("FAIL: Unexpected output: %s", geminiOutput)
+		t.Errorf("FAIL: Unexpected output: %s", result.Result)
 	}
 }
 
@@ -194,16 +198,21 @@ func TestDaytonaADKAgent(t *testing.T) {
 		AptGet([]string{"python3", "python3-pip", "python3-venv"}).
 		Run("pip install --break-system-packages google-adk")
 
+	envVars := map[string]string{"GOOGLE_API_KEY": geminiKey}
+
 	t.Log("Creating sandbox with pre-baked ADK image...")
 	sandboxStart := time.Now()
 
-	sandbox, err := client.CreateSandbox(ctx, image, nil)
+	sandbox, err := client.Create(ctx, types.ImageParams{
+		SandboxBaseParams: types.SandboxBaseParams{EnvVars: envVars},
+		Image:             image,
+	}, options.WithTimeout(8*time.Minute))
 	if err != nil {
-		t.Fatalf("CreateSandbox: %v", err)
+		t.Fatalf("Create sandbox: %v", err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		sandbox.Delete(context.Background())
-	}()
+	})
 
 	createTime := time.Since(sandboxStart)
 	t.Logf("Sandbox created in %s", createTime)
@@ -214,7 +223,7 @@ func TestDaytonaADKAgent(t *testing.T) {
 		t.Fatalf("read agent script: %v", err)
 	}
 
-	if err := sandbox.Fs().UploadFile(ctx, "/workspace/agent.py", agentScript); err != nil {
+	if err := sandbox.FileSystem.UploadFile(ctx, agentScript, "/workspace/agent.py"); err != nil {
 		t.Fatalf("upload agent script: %v", err)
 	}
 
@@ -222,15 +231,10 @@ func TestDaytonaADKAgent(t *testing.T) {
 	t.Log("Running ADK agent in sandbox...")
 	execStart := time.Now()
 
-	envVars := map[string]string{
-		"GOOGLE_API_KEY": geminiKey,
-	}
-
-	output, err := sandbox.Exec(ctx,
-		`cd /workspace && python3 agent.py --task-id "daytona-test" --issue-id "ISS-300" --prompt "Read issue ISS-300 and summarize it."`,
-		envVars, nil)
+	execResult, err := sandbox.Process.ExecuteCommand(ctx,
+		`cd /workspace && python3 agent.py --task-id "daytona-test" --issue-id "ISS-300" --prompt "Read issue ISS-300 and summarize it."`)
 	if err != nil {
-		t.Fatalf("agent execution failed: %v\noutput: %s", err, output)
+		t.Fatalf("agent execution failed: %v\noutput: %s", err, execResult.Result)
 	}
 
 	execTime := time.Since(execStart)
@@ -239,7 +243,7 @@ func TestDaytonaADKAgent(t *testing.T) {
 	t.Logf("Agent completed in %s (total with sandbox: %s)", execTime, totalTime)
 
 	// Parse NDJSON output
-	scanner := bufio.NewScanner(strings.NewReader(output))
+	scanner := bufio.NewScanner(strings.NewReader(execResult.Result))
 	var events []map[string]any
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())

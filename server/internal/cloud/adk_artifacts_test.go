@@ -184,7 +184,7 @@ asyncio.run(main())
 				t.Errorf("FAIL: %s doesn't start with PK magic bytes", filename)
 			}
 		}
-		if filename == "comparison.xlsx" && len(data) > 0 {
+		if filename == "comparison.xlsx" && len(data) >= 2 {
 			if data[0] == 'P' && data[1] == 'K' {
 				t.Logf("PASS: %s is a valid ZIP/XLSX file", filename)
 			} else {
