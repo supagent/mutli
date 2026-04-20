@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// EmbeddedBackend implements Backend by running OpenHarness inside a Daytona sandbox.
+// EmbeddedBackend implements Backend by running an ADK agent inside a Daytona sandbox.
 // It delegates execution to a SandboxExecutor (the cloud.SandboxManager).
 type EmbeddedBackend struct {
 	Executor SandboxExecutor
