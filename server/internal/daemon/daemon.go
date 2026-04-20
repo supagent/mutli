@@ -59,11 +59,12 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	// Initialize sandbox manager for embedded runtime (if Daytona is configured).
 	if cfg.DaytonaAPIKey != "" {
 		mgr, err := cloud.NewSandboxManager(cloud.SandboxConfig{
-			DaytonaAPIKey:    cfg.DaytonaAPIKey,
-			DaytonaAPIURL:    cfg.DaytonaAPIURL,
-			DefaultModel:     cfg.EmbeddedModel,
-			DefaultMaxTurns:  cfg.EmbeddedMaxTurns,
-			FallbackAPIKey:   cfg.FallbackAPIKey,
+			DaytonaAPIKey:   cfg.DaytonaAPIKey,
+			DaytonaAPIURL:   cfg.DaytonaAPIURL,
+			DefaultModel:    cfg.EmbeddedModel,
+			DefaultMaxTurns: cfg.EmbeddedMaxTurns,
+			GeminiAPIKey:    cfg.FallbackAPIKey,
+			MulicaAPIURL:    cfg.ServerBaseURL,
 		}, logger)
 		if err != nil {
 			logger.Warn("failed to initialize sandbox manager — embedded runtime disabled", "error", err)
@@ -101,6 +102,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Load auth token from CLI config.
 	if err := d.resolveAuth(); err != nil {
 		return err
+	}
+
+	// Inject auth token into sandbox manager so embedded agents can call the API.
+	if d.sandboxMgr != nil {
+		d.sandboxMgr.SetAgentToken(d.client.GetToken())
 	}
 
 	// Load and register watched workspaces.
@@ -984,9 +990,12 @@ func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.L
 
 	backend := &agent.EmbeddedBackend{Executor: d.sandboxMgr}
 	opts := agent.ExecOptions{
-		Model:    d.cfg.EmbeddedModel,
-		MaxTurns: d.cfg.EmbeddedMaxTurns,
-		Timeout:  d.cfg.AgentTimeout,
+		TaskID:      task.ID,
+		IssueID:     task.IssueID,
+		WorkspaceID: task.WorkspaceID,
+		Model:       d.cfg.EmbeddedModel,
+		MaxTurns:    d.cfg.EmbeddedMaxTurns,
+		Timeout:     d.cfg.AgentTimeout,
 	}
 	if task.Agent != nil && task.Agent.Instructions != "" {
 		opts.SystemPrompt = task.Agent.Instructions

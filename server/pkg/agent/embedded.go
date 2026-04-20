@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// EmbeddedBackend implements Backend by running OpenHarness inside a Daytona sandbox.
+// EmbeddedBackend implements Backend by running an ADK agent inside a Daytona sandbox.
 // It delegates execution to a SandboxExecutor (the cloud.SandboxManager).
 type EmbeddedBackend struct {
 	Executor SandboxExecutor
@@ -21,6 +21,8 @@ type SandboxExecutor interface {
 // SandboxTaskConfig is the task config passed to the sandbox executor.
 type SandboxTaskConfig struct {
 	TaskID       string
+	IssueID      string
+	WorkspaceID  string
 	Prompt       string
 	Model        string
 	MaxTurns     int
@@ -37,6 +39,9 @@ func (b *EmbeddedBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	}
 
 	return b.Executor.Execute(ctx, SandboxTaskConfig{
+		TaskID:       opts.TaskID,
+		IssueID:      opts.IssueID,
+		WorkspaceID:  opts.WorkspaceID,
 		Prompt:       prompt,
 		Model:        opts.Model,
 		MaxTurns:     opts.MaxTurns,

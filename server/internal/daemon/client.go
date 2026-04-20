@@ -57,6 +57,11 @@ func (c *Client) SetToken(token string) {
 	c.token = token
 }
 
+// GetToken returns the current auth token.
+func (c *Client) GetToken() string {
+	return c.token
+}
+
 // Token returns the current auth token.
 func (c *Client) Token() string {
 	return c.token
