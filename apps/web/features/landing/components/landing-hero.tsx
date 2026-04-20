@@ -91,7 +91,7 @@ export function LandingHero() {
 }
 
 const INSTALL_COMMAND =
-  "curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash";
+  "curl -fsSL https://raw.githubusercontent.com/supagent/mutli/main/scripts/install.sh | bash";
 
 function InstallCommand() {
   const [copied, setCopied] = useState(false);

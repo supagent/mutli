@@ -24,7 +24,7 @@ type GitHubRelease struct {
 // FetchLatestRelease fetches the latest release tag from the multica GitHub repo.
 func FetchLatestRelease() (*GitHubRelease, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/latest", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/supagent/mutli/releases/latest", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -80,10 +80,10 @@ func GetBrewPrefix() string {
 	return strings.TrimSpace(string(out))
 }
 
-// UpdateViaBrew runs `brew upgrade multica-ai/tap/multica`.
+// UpdateViaBrew runs `brew upgrade supagent/multi-cli/multica`.
 // Returns the combined output and any error.
 func UpdateViaBrew() (string, error) {
-	cmd := exec.Command("brew", "upgrade", "multica-ai/tap/multica")
+	cmd := exec.Command("brew", "upgrade", "supagent/multi-cli/multica")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("brew upgrade failed: %w", err)
@@ -91,8 +91,8 @@ func UpdateViaBrew() (string, error) {
 	return string(out), nil
 }
 
-// UpdateViaDownload downloads the latest release binary from GitHub and replaces
-// the current executable in-place. Returns the combined output message and any error.
+// UpdateViaDownload downloads the latest release binary from GitHub using the gh CLI
+// (required for private repos) and replaces the current executable in-place.
 func UpdateViaDownload(targetVersion string) (string, error) {
 	// Determine current binary path.
 	exePath, err := os.Executable()
@@ -104,28 +104,38 @@ func UpdateViaDownload(targetVersion string) (string, error) {
 		return "", fmt.Errorf("resolve symlink: %w", err)
 	}
 
-	// Build download URL: multica_{os}_{arch}.tar.gz
+	// Build asset pattern: multica_{os}_{arch}.tar.gz
 	tag := targetVersion
 	if !strings.HasPrefix(tag, "v") {
 		tag = "v" + tag
 	}
 	assetName := fmt.Sprintf("multica_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
-	downloadURL := fmt.Sprintf("https://github.com/multica-ai/multica/releases/download/%s/%s", tag, assetName)
 
-	// Download the tarball.
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Get(downloadURL)
+	// Download via gh CLI (handles auth for private repos).
+	tmpDir, err := os.MkdirTemp("", "multica-update-*")
 	if err != nil {
-		return "", fmt.Errorf("download failed: %w", err)
+		return "", fmt.Errorf("create temp dir: %w", err)
 	}
-	defer resp.Body.Close()
+	defer os.RemoveAll(tmpDir)
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download failed: HTTP %d from %s", resp.StatusCode, downloadURL)
+	ghCmd := exec.Command("gh", "release", "download", tag,
+		"-R", "supagent/mutli",
+		"--pattern", assetName,
+		"-D", tmpDir,
+	)
+	if out, err := ghCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("gh release download failed: %s: %w", string(out), err)
 	}
 
-	// Extract the "multica" binary from the tarball.
-	binaryData, err := extractBinaryFromTarGz(resp.Body, "multica")
+	// Open and extract the tarball.
+	tarPath := filepath.Join(tmpDir, assetName)
+	f, err := os.Open(tarPath)
+	if err != nil {
+		return "", fmt.Errorf("open downloaded tarball: %w", err)
+	}
+	defer f.Close()
+
+	binaryData, err := extractBinaryFromTarGz(f, "multica")
 	if err != nil {
 		return "", fmt.Errorf("extract binary: %w", err)
 	}

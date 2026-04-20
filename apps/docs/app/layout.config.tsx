@@ -15,7 +15,7 @@ export const baseOptions: BaseLayoutProps = {
     },
     {
       text: "GitHub",
-      url: "https://github.com/multica-ai/multica",
+      url: "https://github.com/supagent/mutli",
     },
     {
       text: "Cloud",
