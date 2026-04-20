@@ -261,7 +261,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		Agents:             agents,
 		DaytonaAPIKey:      daytonaKey,
 		DaytonaAPIURL:      strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
-		EmbeddedModel:      envOrDefault("MULTICA_EMBEDDED_MODEL", "auto-fastest"),
+		EmbeddedModel:      envOrDefault("MULTICA_EMBEDDED_MODEL", "gemini-2.5-flash"),
 		EmbeddedMaxTurns:   embeddedMaxTurns,
 		FallbackAPIKey:     strings.TrimSpace(os.Getenv("GOOGLE_AI_API_KEY")),
 		WorkspacesRoot:     workspacesRoot,

@@ -104,15 +104,14 @@ async def run(task_id: str, issue_id: str, prompt: str, model: str, max_turns: i
 
     emitter = NDJSONEmitter(task_id=task_id, issue_id=issue_id, model=model)
 
-    # Google Search grounding runs server-side at Google — works inside Daytona
-    # sandboxes since traffic goes through generativelanguage.googleapis.com.
-    google_search_tool = types.Tool(google_search=types.GoogleSearch())
-
+    # NOTE: google_search (ADK built-in grounding) cannot be combined with
+    # function calling tools in Gemini 2.5. It will be added as a separate
+    # research sub-agent in Phase 4 (multi-agent).
     agent = Agent(
         name="multica_agent",
         model=model,
         instruction=SYSTEM_PROMPT,
-        tools=ALL_TOOLS + [google_search_tool],
+        tools=ALL_TOOLS,
         before_model_callback=make_turn_limiter(max_turns),
     )
 
