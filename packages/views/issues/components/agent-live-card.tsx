@@ -13,6 +13,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@multica/ui
 import { useActorName } from "@multica/core/workspace/hooks";
 import { redactSecrets } from "../utils/redact";
 import { AgentTranscriptDialog } from "./agent-transcript-dialog";
+import { Markdown } from "@multica/ui/markdown";
 
 // ─── Shared types & helpers ─────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ interface TimelineItem {
   content?: string;
   input?: Record<string, unknown>;
   output?: string;
+  agent_name?: string;
 }
 
 function formatElapsed(startedAt: string): string {
@@ -91,6 +93,7 @@ function buildTimeline(msgs: TaskMessagePayload[]): TimelineItem[] {
       content: msg.content ? redactSecrets(msg.content) : msg.content,
       input: msg.input,
       output: msg.output ? redactSecrets(msg.output) : msg.output,
+      agent_name: msg.agent_name,
     });
   }
   return items.sort((a, b) => a.seq - b.seq);
@@ -175,6 +178,7 @@ export function AgentLiveCard({ issueId }: AgentLiveCardProps) {
         content: msg.content,
         input: msg.input,
         output: msg.output,
+        agent_name: msg.agent_name,
       };
 
       setTaskStates((prev) => {
@@ -327,6 +331,7 @@ function SingleAgentLiveCard({ task, items, issueId, agentName }: SingleAgentLiv
   }, [task.id, issueId, cancelling]);
 
   const toolCount = items.filter((i) => i.type === "tool_use").length;
+  const subAgentNames = [...new Set(items.filter((i) => i.agent_name && i.agent_name !== "multica_agent").map((i) => i.agent_name!))];
 
   return (
     <div className="rounded-lg border border-info/20 bg-info/5 backdrop-blur-sm">
@@ -358,6 +363,9 @@ function SingleAgentLiveCard({ task, items, issueId, agentName }: SingleAgentLiv
           {toolCount > 0 && (
             <span className="text-muted-foreground shrink-0">{toolCount} tools</span>
           )}
+          {subAgentNames.map((name) => (
+            <AgentBadge key={name} name={name} />
+          ))}
         </div>
         <div className="ml-auto flex items-center gap-1 shrink-0">
           <button
@@ -661,21 +669,108 @@ function TaskRunEntry({ task, allTasks, onRetried }: { task: AgentTask; allTasks
 
 // ─── Shared timeline row rendering ──────────────────────────────────────────
 
+function AgentBadge({ name }: { name?: string }) {
+  if (!name || name === "multica_agent") return null;
+  return (
+    <span className="inline-flex items-center rounded px-1 py-0.5 text-[10px] font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 mr-1">
+      {name}
+    </span>
+  );
+}
+
+function TickerPreview({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval>>();
+
+  const startScroll = useCallback(() => {
+    const el = ref.current;
+    if (!el || el.scrollWidth <= el.clientWidth) return;
+    intervalRef.current = setInterval(() => {
+      if (!ref.current) return;
+      if (ref.current.scrollLeft >= ref.current.scrollWidth - ref.current.clientWidth) {
+        clearInterval(intervalRef.current);
+        return;
+      }
+      ref.current.scrollLeft += 1;
+    }, 20);
+  }, []);
+
+  const stopScroll = useCallback(() => {
+    clearInterval(intervalRef.current);
+    if (ref.current) ref.current.scrollTo({ left: 0, behavior: "smooth" });
+  }, []);
+
+  return (
+    <span
+      ref={ref}
+      className="text-muted-foreground/50 min-w-0 overflow-hidden whitespace-nowrap"
+      onMouseEnter={startScroll}
+      onMouseLeave={stopScroll}
+    >
+      {text}
+    </span>
+  );
+}
+
+function SubAgentCollapsible({ name, content, children }: { name: string; content?: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+
+  // Extract first sentence as preview (strip leading markdown headings).
+  const firstSentence = content
+    ? content.replace(/^#+\s*/m, "").split(/(?<=[.!?])\s/)[0]?.trim() || ""
+    : "";
+  const wordCount = content ? content.trim().split(/\s+/).length : 0;
+  const readTime = wordCount > 0 ? Math.ceil(wordCount / 200) : 0;
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className="flex items-center gap-1.5 rounded px-1 -mx-1 py-0.5 text-xs hover:bg-accent/30 transition-colors max-w-full">
+        <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
+        <AgentBadge name={name} />
+        {!open && firstSentence && (
+          <TickerPreview text={firstSentence} />
+        )}
+        {!open && readTime > 0 && (
+          <span className="text-muted-foreground/40 shrink-0 tabular-nums">{readTime} min read</span>
+        )}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="ml-4 border-l border-purple-200 dark:border-purple-800/40 pl-2">
+          {children}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function TimelineRow({ item }: { item: TimelineItem }) {
-  switch (item.type) {
-    case "tool_use":
-      return <ToolCallRow item={item} />;
-    case "tool_result":
-      return <ToolResultRow item={item} />;
-    case "thinking":
-      return <ThinkingRow item={item} />;
-    case "text":
-      return <TextRow item={item} />;
-    case "error":
-      return <ErrorRow item={item} />;
-    default:
-      return null;
-  }
+  const badge = item.agent_name && item.agent_name !== "multica_agent" ? (
+    <AgentBadge name={item.agent_name} />
+  ) : null;
+
+  const row = (() => {
+    switch (item.type) {
+      case "tool_use":
+        return <ToolCallRow item={item} />;
+      case "tool_result":
+        return <ToolResultRow item={item} />;
+      case "thinking":
+        return <ThinkingRow item={item} />;
+      case "text":
+        return <TextRow item={item} />;
+      case "error":
+        return <ErrorRow item={item} />;
+      default:
+        return null;
+    }
+  })();
+
+  if (!badge || !row) return row;
+  return (
+    <SubAgentCollapsible name={item.agent_name!} content={item.content}>
+      {row}
+    </SubAgentCollapsible>
+  );
 }
 
 function ToolCallRow({ item }: { item: TimelineItem }) {
@@ -758,14 +853,13 @@ function ThinkingRow({ item }: { item: TimelineItem }) {
 function TextRow({ item }: { item: TimelineItem }) {
   const text = item.content ?? "";
   if (!text.trim()) return null;
-  const lines = text.trim().split("\n").filter(Boolean);
-  const last = lines[lines.length - 1] ?? "";
-  if (!last) return null;
 
   return (
     <div className="flex items-start gap-1.5 px-1 -mx-1 py-0.5 text-xs">
       <span className="h-3 w-3 shrink-0" />
-      <span className="text-muted-foreground/60 truncate">{last}</span>
+      <div className="text-muted-foreground/60 min-w-0 flex-1 overflow-hidden prose-sm [&_h1]:text-sm [&_h2]:text-xs [&_h3]:text-xs [&_p]:text-xs [&_li]:text-xs [&_ul]:my-1 [&_ol]:my-1 [&_p]:my-1">
+        <Markdown mode="minimal">{text}</Markdown>
+      </div>
     </div>
   );
 }

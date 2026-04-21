@@ -997,8 +997,22 @@ func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.L
 		MaxTurns:    d.cfg.EmbeddedMaxTurns,
 		Timeout:     d.cfg.AgentTimeout,
 	}
-	if task.Agent != nil && task.Agent.Instructions != "" {
-		opts.SystemPrompt = task.Agent.Instructions
+	if task.Agent != nil {
+		if task.Agent.Instructions != "" {
+			opts.SystemPrompt = task.Agent.Instructions
+		}
+		// Pass sub-agent definitions for multi-agent orchestration.
+		if len(task.Agent.SubAgents) > 0 {
+			opts.SubAgents = make([]agent.SubAgentDef, len(task.Agent.SubAgents))
+			for i, sa := range task.Agent.SubAgents {
+				opts.SubAgents[i] = agent.SubAgentDef{
+					Name:         sa.Name,
+					Description:  sa.Description,
+					Instructions: sa.Instructions,
+				}
+			}
+			taskLog.Info("multi-agent orchestration", "sub_agents", len(opts.SubAgents))
+		}
 	}
 
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, opts, taskLog, task.ID)
@@ -1264,6 +1278,8 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		var mu sync.Mutex
 		var pendingText strings.Builder
 		var pendingThinking strings.Builder
+		var pendingTextAgent string
+		var pendingThinkingAgent string
 		var batch []TaskMessageData
 		callIDToTool := map[string]string{}
 
@@ -1272,20 +1288,24 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			if pendingThinking.Len() > 0 {
 				s := seq.Add(1)
 				batch = append(batch, TaskMessageData{
-					Seq:     int(s),
-					Type:    "thinking",
-					Content: pendingThinking.String(),
+					Seq:       int(s),
+					Type:      "thinking",
+					Content:   pendingThinking.String(),
+					AgentName: pendingThinkingAgent,
 				})
 				pendingThinking.Reset()
+				pendingThinkingAgent = ""
 			}
 			if pendingText.Len() > 0 {
 				s := seq.Add(1)
 				batch = append(batch, TaskMessageData{
-					Seq:     int(s),
-					Type:    "text",
-					Content: pendingText.String(),
+					Seq:       int(s),
+					Type:      "text",
+					Content:   pendingText.String(),
+					AgentName: pendingTextAgent,
 				})
 				pendingText.Reset()
+				pendingTextAgent = ""
 			}
 			toSend := batch
 			batch = nil
@@ -1328,10 +1348,11 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				s := seq.Add(1)
 				mu.Lock()
 				batch = append(batch, TaskMessageData{
-					Seq:   int(s),
-					Type:  "tool_use",
-					Tool:  msg.Tool,
-					Input: msg.Input,
+					Seq:       int(s),
+					Type:      "tool_use",
+					Tool:      msg.Tool,
+					Input:     msg.Input,
+					AgentName: msg.AgentName,
 				})
 				mu.Unlock()
 			case agent.MessageToolResult:
@@ -1348,15 +1369,28 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				}
 				mu.Lock()
 				batch = append(batch, TaskMessageData{
-					Seq:    int(s),
-					Type:   "tool_result",
-					Tool:   toolName,
-					Output: output,
+					Seq:       int(s),
+					Type:      "tool_result",
+					Tool:      toolName,
+					Output:    output,
+					AgentName: msg.AgentName,
 				})
 				mu.Unlock()
 			case agent.MessageThinking:
 				if msg.Content != "" {
 					mu.Lock()
+					// Flush if agent changed to avoid mixing sub-agent text.
+					if pendingThinking.Len() > 0 && pendingThinkingAgent != msg.AgentName {
+						s := seq.Add(1)
+						batch = append(batch, TaskMessageData{
+							Seq:       int(s),
+							Type:      "thinking",
+							Content:   pendingThinking.String(),
+							AgentName: pendingThinkingAgent,
+						})
+						pendingThinking.Reset()
+					}
+					pendingThinkingAgent = msg.AgentName
 					pendingThinking.WriteString(msg.Content)
 					mu.Unlock()
 				}
@@ -1364,6 +1398,18 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				if msg.Content != "" {
 					taskLog.Debug("agent", "text", truncateLog(msg.Content, 200))
 					mu.Lock()
+					// Flush if agent changed to avoid mixing sub-agent text.
+					if pendingText.Len() > 0 && pendingTextAgent != msg.AgentName {
+						s := seq.Add(1)
+						batch = append(batch, TaskMessageData{
+							Seq:       int(s),
+							Type:      "text",
+							Content:   pendingText.String(),
+							AgentName: pendingTextAgent,
+						})
+						pendingText.Reset()
+					}
+					pendingTextAgent = msg.AgentName
 					pendingText.WriteString(msg.Content)
 					mu.Unlock()
 				}
@@ -1372,9 +1418,10 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				s := seq.Add(1)
 				mu.Lock()
 				batch = append(batch, TaskMessageData{
-					Seq:     int(s),
-					Type:    "error",
-					Content: msg.Content,
+					Seq:       int(s),
+					Type:      "error",
+					Content:   msg.Content,
+					AgentName: msg.AgentName,
 				})
 				mu.Unlock()
 			}

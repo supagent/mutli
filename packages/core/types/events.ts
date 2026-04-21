@@ -176,6 +176,7 @@ export interface TaskMessagePayload {
   content?: string;
   input?: Record<string, unknown>;
   output?: string;
+  agent_name?: string;
 }
 
 export interface TaskCompletedPayload {

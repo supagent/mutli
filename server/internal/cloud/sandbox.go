@@ -2,6 +2,7 @@ package cloud
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"mime"
@@ -83,6 +84,7 @@ func (sm *SandboxManager) Execute(ctx context.Context, cfg agent.SandboxTaskConf
 		MaxTurns:     cfg.MaxTurns,
 		SystemPrompt: cfg.SystemPrompt,
 		Timeout:      cfg.Timeout,
+		SubAgents:    cfg.SubAgents,
 	}
 	return sm.execute(ctx, taskCfg)
 }
@@ -179,6 +181,22 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		}
 	}
 
+	// Upload sub-agent definitions for multi-agent orchestration.
+	if len(taskCfg.SubAgents) > 0 {
+		subAgentJSON, err := json.Marshal(taskCfg.SubAgents)
+		if err != nil {
+			cleanupSandbox(sandbox, sm.logger)
+			cancel()
+			return nil, fmt.Errorf("marshal sub-agents: %w", err)
+		}
+		if err := sandbox.FileSystem.UploadFile(runCtx, subAgentJSON, "/workspace/agent/sub_agents.json"); err != nil {
+			cleanupSandbox(sandbox, sm.logger)
+			cancel()
+			return nil, fmt.Errorf("upload sub_agents.json: %w", err)
+		}
+		sm.logger.Info("uploaded sub-agent definitions", "task", taskCfg.TaskID, "count", len(taskCfg.SubAgents))
+	}
+
 	// Create PTY session for streaming output
 	sessionID := fmt.Sprintf("task-%s", taskCfg.TaskID)
 	handle, err := sandbox.Process.CreatePty(runCtx, sessionID)
@@ -193,13 +211,23 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		return nil, fmt.Errorf("pty connect: %w", err)
 	}
 
+	// Scale maxTurns for orchestrators: each sub-agent needs its own turn budget.
+	if len(taskCfg.SubAgents) > 0 {
+		maxTurns = maxTurns * (1 + len(taskCfg.SubAgents))
+	}
+
 	// Build the agent command
-	cmd := fmt.Sprintf("cd /workspace/agent && python3 multica_agent.py --task-id %s --issue-id %s --prompt %s --model %s --max-turns %d\nexit\n",
+	subAgentsArg := ""
+	if len(taskCfg.SubAgents) > 0 {
+		subAgentsArg = " --sub-agents /workspace/agent/sub_agents.json"
+	}
+	cmd := fmt.Sprintf("cd /workspace/agent && python3 multica_agent.py --task-id %s --issue-id %s --prompt %s --model %s --max-turns %d%s\nexit\n",
 		shellQuote(taskCfg.TaskID),
 		shellQuote(taskCfg.IssueID),
 		shellQuote(taskCfg.Prompt),
 		shellQuote(model),
 		maxTurns,
+		subAgentsArg,
 	)
 
 	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Starting agent..."})

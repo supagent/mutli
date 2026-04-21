@@ -272,6 +272,8 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 					r.Get("/tasks", h.ListAgentTasks)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
+					r.Get("/sub-agents", h.ListSubAgents)
+					r.Put("/sub-agents", h.SetSubAgents)
 				})
 			})
 

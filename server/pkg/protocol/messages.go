@@ -41,7 +41,8 @@ type TaskMessagePayload struct {
 	Tool    string         `json:"tool,omitempty"`     // tool name for tool_use/tool_result
 	Content string         `json:"content,omitempty"`  // text content
 	Input   map[string]any `json:"input,omitempty"`    // tool input (tool_use only)
-	Output  string         `json:"output,omitempty"`   // tool output (tool_result only)
+	Output    string         `json:"output,omitempty"`      // tool output (tool_result only)
+	AgentName string         `json:"agent_name,omitempty"`  // sub-agent attribution
 }
 
 // DaemonRegisterPayload is sent from daemon to server on connection.

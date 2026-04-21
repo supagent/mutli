@@ -39,54 +39,60 @@ class NDJSONEmitter:
         sys.stdout.write(line + "\n")
         sys.stdout.flush()
 
-    def emit_tool_use(self, tool: str, args: dict, call_id: str = ""):
-        self._emit({
+    def _with_agent(self, data: dict, agent_name: str) -> dict:
+        """Add agent_name to event data if non-empty (multi-agent attribution)."""
+        if agent_name:
+            data["agent_name"] = agent_name
+        return data
+
+    def emit_tool_use(self, tool: str, args: dict, agent_name: str = "", call_id: str = ""):
+        self._emit(self._with_agent({
             "type": "tool_use",
             "seq": self._next_seq(),
             "tool": tool,
             "input": args,
             "task_id": self.task_id,
             "issue_id": self.issue_id,
-        })
+        }, agent_name))
 
-    def emit_tool_result(self, tool: str, output: str, call_id: str = ""):
-        self._emit({
+    def emit_tool_result(self, tool: str, output: str, agent_name: str = "", call_id: str = ""):
+        self._emit(self._with_agent({
             "type": "tool_result",
             "seq": self._next_seq(),
             "tool": tool,
             "output": output[:MAX_TOOL_OUTPUT],
             "task_id": self.task_id,
             "issue_id": self.issue_id,
-        })
+        }, agent_name))
 
-    def emit_text(self, content: str):
+    def emit_text(self, content: str, agent_name: str = ""):
         if content.strip():
-            self._emit({
+            self._emit(self._with_agent({
                 "type": "text",
                 "seq": self._next_seq(),
                 "content": content,
                 "task_id": self.task_id,
                 "issue_id": self.issue_id,
-            })
+            }, agent_name))
 
-    def emit_thinking(self, content: str):
+    def emit_thinking(self, content: str, agent_name: str = ""):
         if content.strip():
-            self._emit({
+            self._emit(self._with_agent({
                 "type": "thinking",
                 "seq": self._next_seq(),
                 "content": content,
                 "task_id": self.task_id,
                 "issue_id": self.issue_id,
-            })
+            }, agent_name))
 
-    def emit_error(self, content: str):
-        self._emit({
+    def emit_error(self, content: str, agent_name: str = ""):
+        self._emit(self._with_agent({
             "type": "error",
             "seq": self._next_seq(),
             "content": content,
             "task_id": self.task_id,
             "issue_id": self.issue_id,
-        })
+        }, agent_name))
 
     def emit_result(self, status: str, output: str):
         self._emit({

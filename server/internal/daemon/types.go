@@ -38,12 +38,20 @@ type Task struct {
 	ChatMessage           string     `json:"chat_message,omitempty"`            // user message content for chat tasks
 }
 
+// SubAgentData holds sub-agent definitions for multi-agent orchestration.
+type SubAgentData struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Instructions string `json:"instructions"`
+}
+
 // AgentData holds agent details returned by the claim endpoint.
 type AgentData struct {
-	ID           string      `json:"id"`
-	Name         string      `json:"name"`
-	Instructions string      `json:"instructions"`
-	Skills       []SkillData `json:"skills"`
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	Instructions string         `json:"instructions"`
+	Skills       []SkillData    `json:"skills"`
+	SubAgents    []SubAgentData `json:"sub_agents,omitempty"`
 }
 
 // SkillData represents a structured skill for task execution.

@@ -27,6 +27,8 @@ import type {
   CreateSkillRequest,
   UpdateSkillRequest,
   SetAgentSkillsRequest,
+  SubAgentRef,
+  SetSubAgentsRequest,
   PersonalAccessToken,
   CreatePersonalAccessTokenRequest,
   CreatePersonalAccessTokenResponse,
@@ -611,6 +613,17 @@ export class ApiClient {
 
   async setAgentSkills(agentId: string, data: SetAgentSkillsRequest): Promise<void> {
     await this.fetch(`/api/agents/${agentId}/skills`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listSubAgents(agentId: string): Promise<SubAgentRef[]> {
+    return this.fetch(`/api/agents/${agentId}/sub-agents`);
+  }
+
+  async setSubAgents(agentId: string, data: SetSubAgentsRequest): Promise<void> {
+    await this.fetch(`/api/agents/${agentId}/sub-agents`, {
       method: "PUT",
       body: JSON.stringify(data),
     });

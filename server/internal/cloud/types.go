@@ -1,6 +1,10 @@
 package cloud
 
-import "time"
+import (
+	"time"
+
+	"github.com/multica-ai/multica/server/pkg/agent"
+)
 
 // SandboxConfig holds configuration for the Daytona sandbox manager.
 type SandboxConfig struct {
@@ -22,6 +26,7 @@ type TaskExecConfig struct {
 	Prompt       string        // Agent prompt
 	Model        string        // LLM model override (empty = use SandboxConfig.DefaultModel)
 	MaxTurns     int           // Max turns override (0 = use SandboxConfig.DefaultMaxTurns)
-	SystemPrompt string        // Additional system prompt
-	Timeout      time.Duration // Execution timeout (0 = 20min default)
+	SystemPrompt string              // Additional system prompt
+	Timeout      time.Duration      // Execution timeout (0 = 20min default)
+	SubAgents    []agent.SubAgentDef // Sub-agent definitions for multi-agent orchestration
 }

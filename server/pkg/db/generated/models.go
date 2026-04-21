@@ -61,6 +61,13 @@ type AgentSkill struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type AgentSubAgent struct {
+	AgentID    pgtype.UUID        `json:"agent_id"`
+	SubAgentID pgtype.UUID        `json:"sub_agent_id"`
+	Position   int32              `json:"position"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
 type AgentTaskQueue struct {
 	ID               pgtype.UUID        `json:"id"`
 	AgentID          pgtype.UUID        `json:"agent_id"`
@@ -327,6 +334,7 @@ type TaskMessage struct {
 	Input     []byte             `json:"input"`
 	Output    pgtype.Text        `json:"output"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	AgentName pgtype.Text        `json:"agent_name"`
 }
 
 type TaskUsage struct {

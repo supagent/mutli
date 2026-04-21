@@ -252,6 +252,95 @@ func TestParseNDJSONLine_ResultEmptyUsage(t *testing.T) {
 	}
 }
 
+// TestParseNDJSONLine_AgentNamePropagated verifies agent_name is extracted
+// and propagated to Message.AgentName for all event types.
+func TestParseNDJSONLine_AgentNamePropagated(t *testing.T) {
+	// tool_use with agent_name
+	raw := `{"type":"tool_use","seq":1,"tool":"research_tool","input":{"query":"AI"},"agent_name":"researcher","task_id":"t1"}`
+	msg, _, ok := ParseNDJSONLine(raw)
+	if !ok {
+		t.Fatal("expected ok=true for tool_use with agent_name")
+	}
+	if msg.AgentName != "researcher" {
+		t.Fatalf("expected AgentName %q, got %q", "researcher", msg.AgentName)
+	}
+	if msg.Tool != "research_tool" {
+		t.Fatalf("expected tool %q, got %q", "research_tool", msg.Tool)
+	}
+
+	// tool_result with agent_name
+	raw = `{"type":"tool_result","seq":2,"tool":"research_tool","output":"data","agent_name":"researcher"}`
+	msg, _, ok = ParseNDJSONLine(raw)
+	if !ok {
+		t.Fatal("expected ok=true for tool_result with agent_name")
+	}
+	if msg.AgentName != "researcher" {
+		t.Fatalf("expected AgentName %q, got %q", "researcher", msg.AgentName)
+	}
+
+	// text with agent_name
+	raw = `{"type":"text","seq":3,"content":"findings here","agent_name":"writer"}`
+	msg, _, ok = ParseNDJSONLine(raw)
+	if !ok {
+		t.Fatal("expected ok=true for text with agent_name")
+	}
+	if msg.AgentName != "writer" {
+		t.Fatalf("expected AgentName %q, got %q", "writer", msg.AgentName)
+	}
+	if msg.Content != "findings here" {
+		t.Fatalf("expected content %q, got %q", "findings here", msg.Content)
+	}
+
+	// thinking with agent_name
+	raw = `{"type":"thinking","seq":4,"content":"let me think","agent_name":"orchestrator"}`
+	msg, _, ok = ParseNDJSONLine(raw)
+	if !ok {
+		t.Fatal("expected ok=true for thinking with agent_name")
+	}
+	if msg.AgentName != "orchestrator" {
+		t.Fatalf("expected AgentName %q, got %q", "orchestrator", msg.AgentName)
+	}
+
+	// error with agent_name
+	raw = `{"type":"error","seq":5,"content":"something broke","agent_name":"researcher"}`
+	msg, _, ok = ParseNDJSONLine(raw)
+	if !ok {
+		t.Fatal("expected ok=true for error with agent_name")
+	}
+	if msg.AgentName != "researcher" {
+		t.Fatalf("expected AgentName %q, got %q", "researcher", msg.AgentName)
+	}
+}
+
+// TestParseNDJSONLine_AgentNameEmpty verifies events without agent_name
+// yield empty AgentName (backward compatibility).
+func TestParseNDJSONLine_AgentNameEmpty(t *testing.T) {
+	raw := `{"type":"text","seq":1,"content":"hello"}`
+	msg, _, ok := ParseNDJSONLine(raw)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if msg.AgentName != "" {
+		t.Fatalf("expected empty AgentName, got %q", msg.AgentName)
+	}
+}
+
+// TestParseNDJSONLine_AgentNameOnResult verifies result events preserve
+// agent_name but don't break result parsing.
+func TestParseNDJSONLine_AgentNameOnResult(t *testing.T) {
+	raw := `{"type":"result","status":"completed","output":"done","agent_name":"orchestrator","usage":{"gemini-2.5-flash":{"input_tokens":100,"output_tokens":50,"cache_read_tokens":0,"cache_write_tokens":0}}}`
+	_, result, ok := ParseNDJSONLine(raw)
+	if !ok {
+		t.Fatal("expected ok=true for result with agent_name")
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Status != "completed" {
+		t.Fatalf("expected status %q, got %q", "completed", result.Status)
+	}
+}
+
 func TestParseNDJSONLine_ANSIWithBracketCodes(t *testing.T) {
 	// OSC sequence + CSI sequence wrapping JSON
 	raw := "\x1b]0;title\x07\x1b[?2004l" + `{"type":"text","seq":1,"content":"hello"}` + "\x1b[?2004h"

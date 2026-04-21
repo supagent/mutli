@@ -48,6 +48,12 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
+vi.mock("@multica/ui/markdown", () => ({
+  Markdown: ({ children }: { children: string }) => (
+    <div data-testid="markdown-content">{children}</div>
+  ),
+}));
+
 // Import after mocks
 import { TaskRunHistory } from "./agent-live-card";
 
@@ -220,5 +226,75 @@ describe("TaskRunEntry retry button", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(
       "A task is already running — wait for it to finish"
     ));
+  });
+});
+
+describe("Multi-agent timeline rendering", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetActiveTasksForIssue.mockResolvedValue({ tasks: [] });
+    mockListTaskMessages.mockResolvedValue([]);
+  });
+
+  async function expandHistory() {
+    await waitFor(() => expect(screen.getByText(/Execution history/)).toBeInTheDocument());
+    fireEvent.click(screen.getByText(/Execution history/));
+  }
+
+  async function expandTaskEntry() {
+    // The task entry trigger contains the status text "completed" (displayed capitalized)
+    const statusEl = await waitFor(() => screen.getByText("completed"));
+    const trigger = statusEl.closest("button") || statusEl.parentElement;
+    if (trigger) fireEvent.click(trigger);
+  }
+
+  it("renders agent badge for sub-agent text events", async () => {
+    const task = makeTask({ status: "completed" });
+    mockListTasksByIssue.mockResolvedValue([task]);
+    mockListTaskMessages.mockResolvedValue([
+      { task_id: "task-1", issue_id: "issue-1", seq: 1, type: "text", content: "Setup...", agent_name: "" },
+      { task_id: "task-1", issue_id: "issue-1", seq: 2, type: "text", content: "Research output", agent_name: "Researcher" },
+    ]);
+
+    render(<TaskRunHistory issueId="issue-1" />);
+    await expandHistory();
+    await expandTaskEntry();
+
+    await waitFor(() => expect(screen.getByText("Researcher")).toBeInTheDocument());
+  });
+
+  it("renders sub-agent text via Markdown component", async () => {
+    const task = makeTask({ status: "completed" });
+    mockListTasksByIssue.mockResolvedValue([task]);
+    mockListTaskMessages.mockResolvedValue([
+      { task_id: "task-1", issue_id: "issue-1", seq: 1, type: "text", content: "# Heading\n\n- bullet", agent_name: "Researcher" },
+    ]);
+
+    render(<TaskRunHistory issueId="issue-1" />);
+    await expandHistory();
+    await expandTaskEntry();
+
+    // Expand the sub-agent collapsible to reveal markdown content
+    const badge = await waitFor(() => screen.getByText("Researcher"));
+    fireEvent.click(badge.closest("button") || badge);
+
+    // Markdown mock renders content inside data-testid="markdown-content"
+    await waitFor(() => expect(screen.getByTestId("markdown-content")).toBeInTheDocument());
+  });
+
+  it("does not render badge for multica_agent events", async () => {
+    const task = makeTask({ status: "completed" });
+    mockListTasksByIssue.mockResolvedValue([task]);
+    mockListTaskMessages.mockResolvedValue([
+      { task_id: "task-1", issue_id: "issue-1", seq: 1, type: "tool_use", tool: "transfer_to_agent", agent_name: "multica_agent" },
+    ]);
+
+    render(<TaskRunHistory issueId="issue-1" />);
+    await expandHistory();
+    await expandTaskEntry();
+
+    await waitFor(() => expect(screen.getByText("transfer_to_agent")).toBeInTheDocument());
+    // multica_agent should NOT render as a badge
+    expect(screen.queryByText("multica_agent")).not.toBeInTheDocument();
   });
 });

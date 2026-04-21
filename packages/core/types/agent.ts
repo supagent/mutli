@@ -38,6 +38,12 @@ export interface AgentTask {
   created_at: string;
 }
 
+export interface SubAgentRef {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface Agent {
   id: string;
   workspace_id: string;
@@ -53,6 +59,7 @@ export interface Agent {
   max_concurrent_tasks: number;
   owner_id: string | null;
   skills: Skill[];
+  sub_agents: SubAgentRef[];
   created_at: string;
   updated_at: string;
   archived_at: string | null;
@@ -124,6 +131,10 @@ export interface UpdateSkillRequest {
 
 export interface SetAgentSkillsRequest {
   skill_ids: string[];
+}
+
+export interface SetSubAgentsRequest {
+  sub_agent_ids: string[];
 }
 
 export type RuntimePingStatus = "pending" | "running" | "completed" | "failed" | "timeout";

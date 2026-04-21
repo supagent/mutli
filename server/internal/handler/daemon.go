@@ -365,12 +365,24 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	resp := taskToResponse(*task)
 	if agent, err := h.Queries.GetAgent(r.Context(), task.AgentID); err == nil {
 		skills := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
-		resp.Agent = &TaskAgentData{
+		agentData := &TaskAgentData{
 			ID:           uuidToString(agent.ID),
 			Name:         agent.Name,
 			Instructions: agent.Instructions,
 			Skills:       skills,
 		}
+		// Load sub-agents so the daemon can upload definitions to the sandbox.
+		if subs, err := h.Queries.ListSubAgents(r.Context(), agent.ID); err == nil && len(subs) > 0 {
+			agentData.SubAgents = make([]SubAgentDef, len(subs))
+			for i, sa := range subs {
+				agentData.SubAgents[i] = SubAgentDef{
+					Name:         sa.Name,
+					Description:  sa.Description,
+					Instructions: sa.Instructions,
+				}
+			}
+		}
+		resp.Agent = agentData
 	}
 
 	// Include workspace ID and repos so the daemon can set up worktrees.
@@ -758,12 +770,13 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type TaskMessageRequest struct {
-	Seq     int            `json:"seq"`
-	Type    string         `json:"type"`
-	Tool    string         `json:"tool,omitempty"`
-	Content string         `json:"content,omitempty"`
-	Input   map[string]any `json:"input,omitempty"`
-	Output  string         `json:"output,omitempty"`
+	Seq       int            `json:"seq"`
+	Type      string         `json:"type"`
+	Tool      string         `json:"tool,omitempty"`
+	Content   string         `json:"content,omitempty"`
+	Input     map[string]any `json:"input,omitempty"`
+	Output    string         `json:"output,omitempty"`
+	AgentName string         `json:"agent_name,omitempty"`
 }
 
 type TaskMessageBatchRequest struct {
@@ -813,25 +826,27 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			inputJSON, _ = json.Marshal(msg.Input)
 		}
 		h.Queries.CreateTaskMessage(r.Context(), db.CreateTaskMessageParams{
-			TaskID:  parseUUID(taskID),
-			Seq:     int32(msg.Seq),
-			Type:    msg.Type,
-			Tool:    pgtype.Text{String: msg.Tool, Valid: msg.Tool != ""},
-			Content: pgtype.Text{String: msg.Content, Valid: msg.Content != ""},
-			Input:   inputJSON,
-			Output:  pgtype.Text{String: msg.Output, Valid: msg.Output != ""},
+			TaskID:    parseUUID(taskID),
+			Seq:       int32(msg.Seq),
+			Type:      msg.Type,
+			Tool:      pgtype.Text{String: msg.Tool, Valid: msg.Tool != ""},
+			Content:   pgtype.Text{String: msg.Content, Valid: msg.Content != ""},
+			Input:     inputJSON,
+			Output:    pgtype.Text{String: msg.Output, Valid: msg.Output != ""},
+			AgentName: pgtype.Text{String: msg.AgentName, Valid: msg.AgentName != ""},
 		})
 
 		if workspaceID != "" {
 			h.publish(protocol.EventTaskMessage, workspaceID, "system", "", protocol.TaskMessagePayload{
-				TaskID:  taskID,
-				IssueID: uuidToString(task.IssueID),
-				Seq:     msg.Seq,
-				Type:    msg.Type,
-				Tool:    msg.Tool,
-				Content: msg.Content,
-				Input:   msg.Input,
-				Output:  msg.Output,
+				TaskID:    taskID,
+				IssueID:   uuidToString(task.IssueID),
+				Seq:       msg.Seq,
+				Type:      msg.Type,
+				Tool:      msg.Tool,
+				Content:   msg.Content,
+				Input:     msg.Input,
+				Output:    msg.Output,
+				AgentName: msg.AgentName,
 			})
 		}
 	}
@@ -880,14 +895,15 @@ func (h *Handler) ListTaskMessages(w http.ResponseWriter, r *http.Request) {
 			json.Unmarshal(m.Input, &input)
 		}
 		resp[i] = protocol.TaskMessagePayload{
-			TaskID:  taskID,
-			IssueID: issueID,
-			Seq:     int(m.Seq),
-			Type:    m.Type,
-			Tool:    m.Tool.String,
-			Content: m.Content.String,
-			Input:   input,
-			Output:  m.Output.String,
+			TaskID:    taskID,
+			IssueID:   issueID,
+			Seq:       int(m.Seq),
+			Type:      m.Type,
+			Tool:      m.Tool.String,
+			Content:   m.Content.String,
+			Input:     input,
+			Output:    m.Output.String,
+			AgentName: m.AgentName.String,
 		}
 	}
 
@@ -995,14 +1011,15 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 			json.Unmarshal(m.Input, &input)
 		}
 		resp[i] = protocol.TaskMessagePayload{
-			TaskID:  taskID,
-			IssueID: issueID,
-			Seq:     int(m.Seq),
-			Type:    m.Type,
-			Tool:    m.Tool.String,
-			Content: m.Content.String,
-			Input:   input,
-			Output:  m.Output.String,
+			TaskID:    taskID,
+			IssueID:   issueID,
+			Seq:       int(m.Seq),
+			Type:      m.Type,
+			Tool:      m.Tool.String,
+			Content:   m.Content.String,
+			Input:     input,
+			Output:    m.Output.String,
+			AgentName: m.AgentName.String,
 		}
 	}
 
