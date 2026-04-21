@@ -7,7 +7,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -101,15 +100,9 @@ func TestUploadTaskArtifact_UserTokenNotBlocked(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.UploadTaskArtifact(w, req)
 
-	// The request must NOT fail with 403 "daemon token required".
-	if w.Code == http.StatusForbidden && strings.Contains(w.Body.String(), "daemon token required") {
-		t.Fatalf("UploadTaskArtifact rejected user token with 403: %s", w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("UploadTaskArtifact: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-
-	// It should succeed (200) since we have a valid task, issue, user, and storage.
-	// If it fails for another reason (e.g., S3 unavailable), that's acceptable — the
-	// point is the auth gate no longer blocks user tokens.
-	t.Logf("UploadTaskArtifact status=%d body=%s", w.Code, w.Body.String())
 }
 
 func TestDaemonRegister_WithDaemonToken(t *testing.T) {
