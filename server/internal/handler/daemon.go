@@ -537,13 +537,6 @@ func (h *Handler) UploadTaskArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Artifact uploads must come from the daemon, not regular users.
-	// Without this check, workspace members could spoof agent-attributed uploads.
-	if middleware.DaemonWorkspaceIDFromContext(r.Context()) == "" {
-		writeError(w, http.StatusForbidden, "daemon token required")
-		return
-	}
-
 	taskID := chi.URLParam(r, "taskId")
 	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
 	if !ok {

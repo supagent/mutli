@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/storage"
 )
 
 // newDaemonTokenRequest creates an HTTP request with daemon token context set
@@ -24,6 +27,89 @@ func newDaemonTokenRequest(method, path string, body any, workspaceID, daemonID 
 	// No X-User-ID — daemon tokens don't set it.
 	ctx := middleware.WithDaemonContext(req.Context(), workspaceID, daemonID)
 	return req.WithContext(ctx)
+}
+
+// stubStorage satisfies storage.Storage for tests that need non-nil Storage.
+type stubStorage struct{}
+
+func (s *stubStorage) Upload(_ context.Context, key string, _ []byte, _ string, _ string) (string, error) {
+	return "https://example.com/" + key, nil
+}
+func (s *stubStorage) Delete(_ context.Context, _ string)       {}
+func (s *stubStorage) DeleteKeys(_ context.Context, _ []string) {}
+func (s *stubStorage) KeyFromURL(rawURL string) string          { return rawURL }
+
+var _ storage.Storage = (*stubStorage)(nil)
+
+// TestUploadTaskArtifact_UserTokenNotBlocked verifies that artifact uploads
+// from a user-token-authenticated daemon are not rejected with 403 "daemon token
+// required". Before the fix (issue #56), only mdt_ daemon tokens were accepted.
+func TestUploadTaskArtifact_UserTokenNotBlocked(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	// Create issue and task fixtures.
+	var issueID, taskID string
+	err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type)
+		VALUES ($1, 'artifact-upload-test', 'todo', 'medium', $2, 'member')
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&issueID)
+	if err != nil {
+		t.Fatalf("setup: create issue: %v", err)
+	}
+	defer testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+
+	var agentID, runtimeID string
+	err = testPool.QueryRow(ctx, `
+		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
+	`, testWorkspaceID).Scan(&agentID, &runtimeID)
+	if err != nil {
+		t.Fatalf("setup: get agent: %v", err)
+	}
+
+	err = testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, issue_id, status, runtime_id)
+		VALUES ($1, $2, 'running', $3)
+		RETURNING id
+	`, agentID, issueID, runtimeID).Scan(&taskID)
+	if err != nil {
+		t.Fatalf("setup: create task: %v", err)
+	}
+	defer testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+
+	// Build a handler with non-nil Storage so the upload path is reachable.
+	h := *testHandler
+	h.Storage = &stubStorage{}
+
+	// Build multipart request with a .md file — authenticated as user (no daemon context).
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, _ := writer.CreateFormFile("file", "report.md")
+	part.Write([]byte("# Test Report"))
+	writer.Close()
+
+	req := httptest.NewRequest("POST", "/api/daemon/tasks/"+taskID+"/artifacts", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-User-ID", testUserID)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("taskId", taskID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	h.UploadTaskArtifact(w, req)
+
+	// The request must NOT fail with 403 "daemon token required".
+	if w.Code == http.StatusForbidden && strings.Contains(w.Body.String(), "daemon token required") {
+		t.Fatalf("UploadTaskArtifact rejected user token with 403: %s", w.Body.String())
+	}
+
+	// It should succeed (200) since we have a valid task, issue, user, and storage.
+	// If it fails for another reason (e.g., S3 unavailable), that's acceptable — the
+	// point is the auth gate no longer blocks user tokens.
+	t.Logf("UploadTaskArtifact status=%d body=%s", w.Code, w.Body.String())
 }
 
 func TestDaemonRegister_WithDaemonToken(t *testing.T) {
