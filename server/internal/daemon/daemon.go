@@ -1044,6 +1044,11 @@ func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.L
 		if task.Agent.Instructions != "" {
 			opts.SystemPrompt = task.Agent.Instructions
 		}
+		// Worker tasks should NOT post comments — their output flows to the
+		// orchestrator via synthesis. Override the system prompt to prevent this.
+		if task.Role == "worker" {
+			opts.SystemPrompt += "\n\nIMPORTANT: You are a worker sub-task. Do NOT use add_comment. Just do the work and respond with your output directly. Your results will be collected by the orchestrator."
+		}
 		// Pass sub-agent definitions for multi-agent orchestration.
 		if len(task.Agent.SubAgents) > 0 {
 			opts.SubAgents = make([]agent.SubAgentDef, len(task.Agent.SubAgents))

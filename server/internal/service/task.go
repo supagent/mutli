@@ -386,12 +386,12 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 
-	// Post agent output as a comment, but only for assignment-triggered issue tasks
-	// where the agent did NOT already post a comment during execution.
-	// Comment-triggered tasks: the agent replies via CLI with --parent, so
-	// posting here would create a duplicate.
-	// Chat tasks: no comment posting needed.
-	if task.IssueID.Valid && !task.TriggerCommentID.Valid {
+	// Post agent output as a comment, but only for:
+	// - Assignment-triggered issue tasks (not comment-triggered — those reply via CLI)
+	// - Non-worker tasks (child workers don't post — only the orchestrator/synthesizer does)
+	// - Non-chat tasks
+	isWorker := task.Role.Valid && task.Role.String == "worker"
+	if task.IssueID.Valid && !task.TriggerCommentID.Valid && !isWorker {
 		// Resolve workspace ID for multi-tenancy scoping on artifact linkage.
 		var workspaceID pgtype.UUID
 		if issue, issueErr := s.Queries.GetIssue(ctx, task.IssueID); issueErr == nil {
