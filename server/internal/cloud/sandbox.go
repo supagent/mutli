@@ -151,10 +151,19 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		envVars["MULTICA_TASK_ID"] = taskCfg.TaskID
 	}
 
+	// Build network allow list from the configured API URL so the sandbox
+	// can reach the Multica backend (for create_child_task, etc).
+	var networkAllowList *string
+	if sm.cfg.MulicaAPIURL != "" {
+		list := sm.cfg.MulicaAPIURL
+		networkAllowList = &list
+	}
+
 	sandbox, err := sm.client.Create(runCtx, types.ImageParams{
 		SandboxBaseParams: types.SandboxBaseParams{
-			EnvVars:         envVars,
-			NetworkBlockAll: false, // Allow outbound for Gemini API + Multica API
+			EnvVars:          envVars,
+			NetworkBlockAll:  false,
+			NetworkAllowList: networkAllowList,
 		},
 		Image: image,
 	}, options.WithTimeout(imageTimeout))
