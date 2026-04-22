@@ -115,7 +115,7 @@ def _load_sub_agents(path: str, model: str, max_turns: int) -> list:
     return sub_agents
 
 
-async def run(task_id: str, issue_id: str, prompt: str, model: str, max_turns: int, sub_agents_path: str = ""):
+async def run(task_id: str, issue_id: str, prompt: str, model: str, max_turns: int, sub_agents_path: str = "", system_prompt_extra: str = ""):
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_AI_API_KEY")
     if not api_key:
         emitter = NDJSONEmitter(task_id=task_id, issue_id=issue_id, model=model)
@@ -137,10 +137,15 @@ async def run(task_id: str, issue_id: str, prompt: str, model: str, max_turns: i
     from tools import create_child_task as _cct
     agent_tools = [t for t in ALL_TOOLS if t is not _cct] if sub_agents else ALL_TOOLS
 
+    # Combine base system prompt with agent-specific instructions from the DB.
+    instruction = SYSTEM_PROMPT
+    if system_prompt_extra:
+        instruction += f"\n\n## Agent-Specific Instructions\n{system_prompt_extra}\n"
+
     agent = Agent(
         name="multica_agent",
         model=model,
-        instruction=SYSTEM_PROMPT,
+        instruction=instruction,
         tools=agent_tools,
         before_model_callback=make_turn_limiter(max_turns),
         **({"sub_agents": sub_agents} if sub_agents else {}),
@@ -199,16 +204,18 @@ def main():
     parser.add_argument("--model", default="", help="Model override")
     parser.add_argument("--max-turns", type=int, default=0, help="Max LLM calls")
     parser.add_argument("--sub-agents", default="", help="Path to sub-agents JSON file")
+    parser.add_argument("--system-prompt", default="", help="Additional agent instructions from DB")
     args = parser.parse_args()
 
     model = args.model or os.environ.get("MULTICA_MODEL", "gemini-2.5-flash")
     max_turns = args.max_turns if args.max_turns > 0 else int(os.environ.get("MULTICA_MAX_TURNS", "20"))
 
     sub_agents_path = args.sub_agents
+    system_prompt_extra = args.system_prompt
     print(f"[agent] task={args.task_id} model={model} max_turns={max_turns} sub_agents={sub_agents_path or 'none'}", file=sys.stderr)
 
     start = time.time()
-    exit_code = asyncio.run(run(args.task_id, args.issue_id, args.prompt, model, max_turns, sub_agents_path))
+    exit_code = asyncio.run(run(args.task_id, args.issue_id, args.prompt, model, max_turns, sub_agents_path, system_prompt_extra))
     elapsed = round(time.time() - start, 2)
 
     print(f"[agent] done in {elapsed}s exit_code={exit_code}", file=sys.stderr)
