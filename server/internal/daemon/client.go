@@ -389,6 +389,14 @@ func (c *Client) HasChildTasks(ctx context.Context, taskID string) (bool, error)
 	return len(children) > 0, nil
 }
 
+// CreateChildTask creates a child task under a parent task.
+func (c *Client) CreateChildTask(ctx context.Context, parentTaskID, agentName, prompt string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/children", parentTaskID), map[string]any{
+		"agent_name": agentName,
+		"prompt":     prompt,
+	}, nil)
+}
+
 // SetTaskWaiting transitions a task to waiting state.
 func (c *Client) SetTaskWaiting(ctx context.Context, taskID string) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/waiting", taskID), nil, nil)

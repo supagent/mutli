@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -1080,11 +1081,43 @@ func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.L
 		})
 	}
 
+	// Check for child task requests written by create_child_task tool.
+	// The tool writes to /workspace/output/_child_task_requests.json
+	// because sandbox networking may block direct API calls.
+	var childTasksCreated bool
+	if result.Status == "completed" {
+		for _, art := range result.Artifacts {
+			if art.Filename == "_child_task_requests.json" {
+				var requests []struct {
+					AgentName string `json:"agent_name"`
+					Prompt    string `json:"prompt"`
+				}
+				if err := json.Unmarshal(art.Data, &requests); err != nil {
+					taskLog.Warn("failed to parse child task requests", "error", err)
+					break
+				}
+				for _, req := range requests {
+					if err := d.client.CreateChildTask(ctx, task.ID, req.AgentName, req.Prompt); err != nil {
+						taskLog.Error("failed to create child task", "agent", req.AgentName, "error", err)
+					} else {
+						taskLog.Info("child task created", "agent", req.AgentName)
+						childTasksCreated = true
+					}
+				}
+				break
+			}
+		}
+	}
+
 	// Upload extracted artifacts to server and collect attachment IDs.
+	// Skip internal files (prefixed with _).
 	var artifactIDs []string
 	if result.Status == "completed" && len(result.Artifacts) > 0 {
 		taskLog.Info("uploading artifacts", "count", len(result.Artifacts))
 		for _, art := range result.Artifacts {
+			if strings.HasPrefix(art.Filename, "_") {
+				continue // Skip internal files like _child_task_requests.json
+			}
 			id, err := d.client.UploadArtifact(ctx, task.ID, art.Filename, art.ContentType, art.Data)
 			if err != nil {
 				taskLog.Warn("failed to upload artifact", "filename", art.Filename, "error", err)
@@ -1095,18 +1128,14 @@ func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.L
 		}
 	}
 
-	// If the agent spawned child tasks (via create_child_task tool),
-	// return "waiting" so the parent enters the waiting state.
-	if result.Status == "completed" {
-		hasChildren, _ := d.client.HasChildTasks(ctx, task.ID)
-		if hasChildren {
-			taskLog.Info("agent spawned child tasks, entering waiting state")
-			return TaskResult{
-				Status:  "waiting",
-				Comment: result.Output,
-				Usage:   usageEntries,
-			}, nil
-		}
+	// If child tasks were created, enter waiting state.
+	if childTasksCreated {
+		taskLog.Info("child tasks created, entering waiting state")
+		return TaskResult{
+			Status:  "waiting",
+			Comment: result.Output,
+			Usage:   usageEntries,
+		}, nil
 	}
 
 	switch result.Status {

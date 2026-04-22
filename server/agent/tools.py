@@ -190,13 +190,31 @@ def create_child_task(agent_name: str, prompt: str) -> dict:
         agent_name: Name of the agent to delegate to (must exist in workspace).
         prompt: Instructions for the child agent describing what to do.
     """
-    task_id = os.environ.get("MULTICA_TASK_ID", "")
-    if not task_id:
-        return {"error": "MULTICA_TASK_ID not set — cannot create child tasks outside orchestration"}
-    return _request("POST", f"/api/daemon/tasks/{task_id}/children", {
+    # Write child task request to /workspace/output/ for the daemon to process
+    # after the sandbox exits. This avoids sandbox network restrictions.
+    output_dir = "/workspace/output"
+    requests_file = os.path.join(output_dir, "_child_task_requests.json")
+
+    existing = []
+    if os.path.exists(requests_file):
+        try:
+            with open(requests_file) as f:
+                existing = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            existing = []
+
+    request = {"agent_name": agent_name, "prompt": prompt}
+    existing.append(request)
+
+    os.makedirs(output_dir, exist_ok=True)
+    with open(requests_file, "w") as f:
+        json.dump(existing, f)
+
+    return {
+        "status": "queued",
         "agent_name": agent_name,
-        "prompt": prompt,
-    })
+        "message": f"Child task for {agent_name} will be created when this task completes.",
+    }
 
 
 # ── Tool registry ────────────────────────────────────────────────────────────
