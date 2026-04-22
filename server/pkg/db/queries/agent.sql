@@ -88,7 +88,7 @@ WHERE id = (
       AND NOT EXISTS (
           SELECT 1 FROM agent_task_queue active
           WHERE active.agent_id = atq.agent_id
-            AND active.status IN ('dispatched', 'running')
+            AND active.status IN ('dispatched', 'running', 'waiting')
             AND (
               (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
@@ -151,9 +151,9 @@ SELECT count(*) FROM agent_task_queue
 WHERE agent_id = $1 AND status IN ('dispatched', 'running');
 
 -- name: HasActiveTaskForIssue :one
--- Returns true if there is any queued, dispatched, or running task for the issue.
+-- Returns true if there is any queued, dispatched, running, or waiting task for the issue.
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running');
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting');
 
 -- name: HasPendingTaskForIssue :one
 -- Returns true if there is a queued or dispatched (but not yet running) task for the issue.
@@ -176,7 +176,7 @@ ORDER BY priority DESC, created_at ASC;
 
 -- name: ListActiveTasksByIssue :many
 SELECT * FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 ORDER BY created_at DESC;
 
 -- name: ListTasksByIssue :many
@@ -203,3 +203,40 @@ WHERE retried_from_id = $1;
 UPDATE agent SET status = $2, updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- ── Parent-child task orchestration ──────────────────────────────────────────
+
+-- name: CreateChildTask :one
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, priority, parent_task_id, role)
+VALUES ($1, $2, $3, $4, $5, 'worker')
+RETURNING *;
+
+-- name: ListChildTasks :many
+SELECT * FROM agent_task_queue
+WHERE parent_task_id = $1
+ORDER BY created_at ASC;
+
+-- name: CountActiveChildren :one
+SELECT count(*) FROM agent_task_queue
+WHERE parent_task_id = $1 AND status NOT IN ('completed', 'failed', 'cancelled');
+
+-- name: HasChildTasks :one
+SELECT count(*) > 0 AS has_children FROM agent_task_queue
+WHERE parent_task_id = $1;
+
+-- name: SetTaskWaiting :exec
+UPDATE agent_task_queue SET status = 'waiting'
+WHERE id = $1 AND status = 'running';
+
+-- name: ReactivateWaitingTask :exec
+-- Atomic: only one caller wins the WHERE status='waiting' check.
+UPDATE agent_task_queue SET status = 'queued', role = 'synthesizer'
+WHERE id = $1 AND status = 'waiting';
+
+-- name: UpdateTaskContext :exec
+UPDATE agent_task_queue SET context = $2 WHERE id = $1;
+
+-- name: GetChildResults :many
+SELECT id, agent_id, status, result, error FROM agent_task_queue
+WHERE parent_task_id = $1
+ORDER BY created_at ASC;

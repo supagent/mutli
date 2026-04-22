@@ -468,6 +468,10 @@ export class ApiClient {
     return this.fetch(`/api/issues/${issueId}/usage`);
   }
 
+  async listChildTasks(taskId: string): Promise<AgentTask[]> {
+    return this.fetch(`/api/tasks/${taskId}/children`);
+  }
+
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
     return this.fetch(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
       method: "POST",

@@ -1058,3 +1058,123 @@ func (h *Handler) GetIssueGCCheck(w http.ResponseWriter, r *http.Request) {
 		"updated_at": issue.UpdatedAt.Time,
 	})
 }
+
+// ── Parent-child task orchestration ─────────────────────────────────────────
+
+type CreateChildTaskRequest struct {
+	AgentName string `json:"agent_name"`
+	Prompt    string `json:"prompt"`
+}
+
+// CreateChildTask creates a child task under a parent task.
+// Called by the agent tool from inside the sandbox.
+func (h *Handler) CreateChildTask(w http.ResponseWriter, r *http.Request) {
+	parentTaskID := chi.URLParam(r, "taskId")
+
+	var req CreateChildTaskRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.AgentName == "" {
+		writeError(w, http.StatusBadRequest, "agent_name is required")
+		return
+	}
+
+	// Load parent task to get workspace context.
+	parent, err := h.Queries.GetAgentTask(r.Context(), parseUUID(parentTaskID))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "parent task not found")
+		return
+	}
+
+	// Resolve agent by name within the workspace.
+	var workspaceID pgtype.UUID
+	if parent.IssueID.Valid {
+		if issue, err := h.Queries.GetIssue(r.Context(), parent.IssueID); err == nil {
+			workspaceID = issue.WorkspaceID
+		}
+	}
+
+	agents, err := h.Queries.ListAgents(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list agents")
+		return
+	}
+	var targetAgent *db.Agent
+	for _, a := range agents {
+		if a.Name == req.AgentName {
+			targetAgent = &a
+			break
+		}
+	}
+	if targetAgent == nil {
+		writeError(w, http.StatusNotFound, "agent not found: "+req.AgentName)
+		return
+	}
+
+	child, err := h.TaskService.CreateChildTask(r.Context(), parseUUID(parentTaskID), targetAgent.ID, parent.IssueID, parent.Priority)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create child task: "+err.Error())
+		return
+	}
+
+	// Store the prompt in the child task's context so the daemon can use it.
+	if req.Prompt != "" {
+		contextJSON, _ := json.Marshal(map[string]string{"prompt": req.Prompt})
+		h.Queries.UpdateTaskContext(r.Context(), db.UpdateTaskContextParams{
+			ID:      child.ID,
+			Context: contextJSON,
+		})
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"task_id":    uuidToString(child.ID),
+		"agent_name": req.AgentName,
+		"status":     child.Status,
+	})
+}
+
+// ListChildTasks returns all child tasks for a parent (daemon auth).
+func (h *Handler) ListChildTasks(w http.ResponseWriter, r *http.Request) {
+	parentTaskID := chi.URLParam(r, "taskId")
+	children, err := h.Queries.ListChildTasks(r.Context(), parseUUID(parentTaskID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list child tasks")
+		return
+	}
+	resp := make([]AgentTaskResponse, len(children))
+	for i, t := range children {
+		resp[i] = taskToResponse(t)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ListChildTasksByUser returns child tasks (user auth, workspace-scoped).
+func (h *Handler) ListChildTasksByUser(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "taskId")
+	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
+	if !ok {
+		return
+	}
+	children, err := h.Queries.ListChildTasks(r.Context(), task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list child tasks")
+		return
+	}
+	resp := make([]AgentTaskResponse, len(children))
+	for i, t := range children {
+		resp[i] = taskToResponse(t)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// SetTaskWaiting transitions a running task to waiting state.
+func (h *Handler) SetTaskWaiting(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "taskId")
+	if err := h.TaskService.TransitionToWaiting(r.Context(), parseUUID(taskID)); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "waiting"})
+}

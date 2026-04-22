@@ -377,3 +377,59 @@ func (c *Client) getJSONWithHeaders(ctx context.Context, path string, respBody a
 	}
 	return json.NewDecoder(resp.Body).Decode(respBody)
 }
+
+// ── Parent-child task orchestration ─────────────────────────────────────────
+
+// HasChildTasks checks if a task has any child tasks.
+func (c *Client) HasChildTasks(ctx context.Context, taskID string) (bool, error) {
+	var children []json.RawMessage
+	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/children", taskID), &children); err != nil {
+		return false, err
+	}
+	return len(children) > 0, nil
+}
+
+// SetTaskWaiting transitions a task to waiting state.
+func (c *Client) SetTaskWaiting(ctx context.Context, taskID string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/waiting", taskID), nil, nil)
+}
+
+// ChildResult holds the result of a child task for synthesis.
+type ChildResult struct {
+	AgentName string `json:"agent_name"`
+	Status    string `json:"status"`
+	Output    string `json:"output"`
+	Error     string `json:"error"`
+}
+
+// GetChildResults fetches child task results for synthesis.
+func (c *Client) GetChildResults(ctx context.Context, taskID string) ([]ChildResult, error) {
+	var tasks []struct {
+		Status string          `json:"status"`
+		Result json.RawMessage `json:"result"`
+		Error  *string         `json:"error"`
+		Agent  *struct {
+			Name string `json:"name"`
+		} `json:"agent,omitempty"`
+	}
+	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/children", taskID), &tasks); err != nil {
+		return nil, err
+	}
+	results := make([]ChildResult, len(tasks))
+	for i, t := range tasks {
+		r := ChildResult{Status: t.Status}
+		if t.Agent != nil {
+			r.AgentName = t.Agent.Name
+		}
+		if t.Error != nil {
+			r.Error = *t.Error
+		}
+		if t.Result != nil {
+			var payload struct{ Output string `json:"output"` }
+			json.Unmarshal(t.Result, &payload)
+			r.Output = payload.Output
+		}
+		results[i] = r
+	}
+	return results, nil
+}

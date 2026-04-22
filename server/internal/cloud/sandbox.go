@@ -147,6 +147,9 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 	if taskCfg.WorkspaceID != "" {
 		envVars["MULTICA_WORKSPACE_ID"] = taskCfg.WorkspaceID
 	}
+	if taskCfg.TaskID != "" {
+		envVars["MULTICA_TASK_ID"] = taskCfg.TaskID
+	}
 
 	sandbox, err := sm.client.Create(runCtx, types.ImageParams{
 		SandboxBaseParams: types.SandboxBaseParams{

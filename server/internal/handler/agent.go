@@ -102,8 +102,10 @@ type AgentTaskResponse struct {
 	RetriedFromID         *string        `json:"retried_from_id"`                   // original task that was retried
 	TriggerCommentID      *string        `json:"trigger_comment_id,omitempty"`      // comment that triggered this task
 	TriggerCommentContent string         `json:"trigger_comment_content,omitempty"` // content of the triggering comment
-	ChatSessionID         string         `json:"chat_session_id,omitempty"`         // non-empty for chat tasks
-	ChatMessage           string         `json:"chat_message,omitempty"`            // user message for chat tasks
+	ChatSessionID         string         `json:"chat_session_id,omitempty"`
+	ChatMessage           string         `json:"chat_message,omitempty"`
+	ParentTaskID          *string        `json:"parent_task_id,omitempty"`
+	Role                  *string        `json:"role,omitempty"`
 }
 
 // SubAgentDef is used in claim responses — includes instructions for sandbox execution.
@@ -143,6 +145,8 @@ func taskToResponse(t db.AgentTaskQueue) AgentTaskResponse {
 		CreatedAt:        timestampToString(t.CreatedAt),
 		RetriedFromID:    uuidToPtr(t.RetriedFromID),
 		TriggerCommentID: uuidToPtr(t.TriggerCommentID),
+		ParentTaskID:     uuidToPtr(t.ParentTaskID),
+		Role:             textToPtr(t.Role),
 	}
 }
 

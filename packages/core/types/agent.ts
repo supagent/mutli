@@ -27,7 +27,7 @@ export interface AgentTask {
   agent_id: string;
   runtime_id: string;
   issue_id: string;
-  status: "queued" | "dispatched" | "running" | "completed" | "failed" | "cancelled";
+  status: "queued" | "dispatched" | "running" | "waiting" | "completed" | "failed" | "cancelled";
   priority: number;
   dispatched_at: string | null;
   started_at: string | null;
@@ -35,6 +35,8 @@ export interface AgentTask {
   result: unknown;
   error: string | null;
   retried_from_id: string | null;
+  parent_task_id: string | null;
+  role: "orchestrator" | "worker" | "synthesizer" | null;
   created_at: string;
 }
 

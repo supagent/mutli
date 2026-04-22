@@ -933,6 +933,14 @@ func (d *Daemon) handleTask(ctx context.Context, task Task) {
 		if err := d.client.FailTask(ctx, task.ID, result.Comment); err != nil {
 			taskLog.Error("report blocked task failed", "error", err)
 		}
+	case "waiting":
+		taskLog.Info("task waiting for child tasks")
+		if err := d.client.SetTaskWaiting(ctx, task.ID); err != nil {
+			taskLog.Error("set task waiting failed, falling back to complete", "error", err)
+			if err := d.client.CompleteTask(ctx, task.ID, result.Comment, "", "", "", nil); err != nil {
+				taskLog.Error("complete task fallback also failed", "error", err)
+			}
+		}
 	default:
 		taskLog.Info("task completed", "status", result.Status)
 		if err := d.client.CompleteTask(ctx, task.ID, result.Comment, result.BranchName, result.SessionID, result.WorkDir, result.ArtifactIDs); err != nil {
@@ -956,6 +964,11 @@ func (d *Daemon) handleTask(ctx context.Context, task Task) {
 // buildEmbeddedPrompt constructs a prompt for the embedded agent with the
 // actual issue content included (since the sandbox can't run `multica issue get`).
 func (d *Daemon) buildEmbeddedPrompt(ctx context.Context, task Task) string {
+	// For synthesis tasks (parent reactivated after children complete),
+	// build a prompt with child results.
+	if task.Role == "synthesizer" {
+		return d.buildSynthesisPrompt(ctx, task)
+	}
 	// For comment-triggered tasks, use the comment content directly.
 	if task.TriggerCommentContent != "" {
 		return task.TriggerCommentContent
@@ -977,6 +990,35 @@ func (d *Daemon) buildEmbeddedPrompt(ctx context.Context, task Task) string {
 		prompt.WriteString(issue.Description)
 	}
 	return prompt.String()
+}
+
+// buildSynthesisPrompt constructs a prompt for the synthesis phase.
+// The orchestrator is re-invoked with all child task results aggregated.
+func (d *Daemon) buildSynthesisPrompt(ctx context.Context, task Task) string {
+	children, err := d.client.GetChildResults(ctx, task.ID)
+	if err != nil {
+		d.logger.Warn("failed to fetch child results for synthesis", "error", err)
+		return "Your child tasks have completed. Synthesize their results into a coherent response."
+	}
+
+	var b strings.Builder
+	b.WriteString("Your child tasks have completed. Synthesize their results into a single coherent response.\n\n")
+	for _, child := range children {
+		b.WriteString(fmt.Sprintf("## %s (%s)\n", child.AgentName, child.Status))
+		if child.Status == "completed" && child.Output != "" {
+			output := child.Output
+			if len(output) > 4000 {
+				output = output[:4000] + "\n\n[truncated]"
+			}
+			b.WriteString(output)
+		} else if child.Error != "" {
+			b.WriteString(fmt.Sprintf("Error: %s", child.Error))
+		} else {
+			b.WriteString("No output produced.")
+		}
+		b.WriteString("\n\n")
+	}
+	return b.String()
 }
 
 func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.Logger) (TaskResult, error) {
@@ -1050,6 +1092,20 @@ func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.L
 			}
 			artifactIDs = append(artifactIDs, id)
 			taskLog.Info("artifact uploaded", "filename", art.Filename, "attachment_id", id)
+		}
+	}
+
+	// If the agent spawned child tasks (via create_child_task tool),
+	// return "waiting" so the parent enters the waiting state.
+	if result.Status == "completed" {
+		hasChildren, _ := d.client.HasChildTasks(ctx, task.ID)
+		if hasChildren {
+			taskLog.Info("agent spawned child tasks, entering waiting state")
+			return TaskResult{
+				Status:  "waiting",
+				Comment: result.Output,
+				Usage:   usageEntries,
+			}, nil
 		}
 	}
 

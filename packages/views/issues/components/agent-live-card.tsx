@@ -14,6 +14,11 @@ import { useActorName } from "@multica/core/workspace/hooks";
 import { redactSecrets } from "../utils/redact";
 import { AgentTranscriptDialog } from "./agent-transcript-dialog";
 import { Markdown } from "@multica/ui/markdown";
+import {
+  ChainOfThought,
+  ChainOfThoughtHeader,
+  ChainOfThoughtStep,
+} from "@multica/ui/components/ai-elements/chain-of-thought";
 
 // ─── Shared types & helpers ─────────────────────────────────────────────────
 
@@ -532,7 +537,7 @@ export function TaskRunHistory({ issueId }: TaskRunHistoryProps) {
     }, [issueId]),
   );
 
-  const completedTasks = tasks.filter((t) => t.status === "completed" || t.status === "failed" || t.status === "cancelled");
+  const completedTasks = tasks.filter((t) => t.status === "completed" || t.status === "failed" || t.status === "cancelled" || t.status === "waiting");
   if (completedTasks.length === 0) return null;
 
   return (
@@ -559,9 +564,12 @@ function TaskRunEntry({ task, allTasks, onRetried }: { task: AgentTask; allTasks
   const { getActorName } = useActorName();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<TimelineItem[] | null>(null);
+  const [childTasks, setChildTasks] = useState<AgentTask[]>([]);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retried, setRetried] = useState(false);
+
+  const isOrchestrator = task.role === "orchestrator" || task.role === "synthesizer" || task.status === "waiting";
 
   const loadMessages = useCallback(() => {
     if (items !== null) return; // already loaded
@@ -574,8 +582,13 @@ function TaskRunEntry({ task, allTasks, onRetried }: { task: AgentTask; allTasks
   }, [task.id, items]);
 
   useEffect(() => {
-    if (open) loadMessages();
-  }, [open, loadMessages]);
+    if (open) {
+      loadMessages();
+      if (isOrchestrator) {
+        api.listChildTasks(task.id).then(setChildTasks).catch(console.error);
+      }
+    }
+  }, [open, loadMessages, isOrchestrator, task.id]);
 
   const duration = task.started_at && task.completed_at
     ? formatDuration(task.started_at, task.completed_at)
@@ -670,18 +683,40 @@ function TaskRunEntry({ task, allTasks, onRetried }: { task: AgentTask; allTasks
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="ml-5 mt-1 max-h-64 overflow-y-auto rounded border bg-muted/30 px-3 py-2 space-y-0.5">
+        <div className="ml-5 mt-1 max-h-80 overflow-y-auto rounded border bg-muted/30 px-3 py-2 space-y-0.5">
           {items === null ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
               <Loader2 className="h-3 w-3 animate-spin" />
               Loading...
             </div>
-          ) : items.length === 0 ? (
+          ) : items.length === 0 && childTasks.length === 0 ? (
             <p className="text-xs text-muted-foreground py-2">No execution data recorded.</p>
           ) : (
-            items.map((item, idx) => (
-              <TimelineRow key={`${item.seq}-${idx}`} item={item} />
-            ))
+            <>
+              {renderTimelineItems(items)}
+              {childTasks.length > 0 && (
+                <ChainOfThought defaultOpen className="mt-2 pt-2 border-t border-border/50">
+                  <ChainOfThoughtHeader>
+                    {childTasks.filter((c) => c.status === "completed").length}/{childTasks.length} tasks complete
+                  </ChainOfThoughtHeader>
+                  {childTasks.map((child) => (
+                    <ChainOfThoughtStep
+                      key={child.id}
+                      icon={Bot}
+                      label={getActorName("agent", child.agent_id)}
+                      description={child.status === "completed" && child.started_at && child.completed_at
+                        ? formatDuration(child.started_at, child.completed_at)
+                        : child.status}
+                      status={
+                        child.status === "completed" ? "complete" :
+                        child.status === "running" || child.status === "dispatched" ? "active" :
+                        "pending"
+                      }
+                    />
+                  ))}
+                </ChainOfThought>
+              )}
+            </>
           )}
         </div>
       </CollapsibleContent>

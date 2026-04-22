@@ -175,6 +175,30 @@ def create_xlsx(filename: str, data_json: str) -> dict:
         return {"error": f"Failed to create xlsx: {e}"}
 
 
+# ── Orchestration tools ─────────────────────────────────────────────────────
+
+
+def create_child_task(agent_name: str, prompt: str) -> dict:
+    """Delegate a task to another agent. Creates a child task that runs
+    independently in its own sandbox. Use this for parallel execution or
+    when work should be done by a specialist agent.
+
+    The child task will be picked up by the target agent's runtime and
+    executed concurrently. Results are collected automatically.
+
+    Args:
+        agent_name: Name of the agent to delegate to (must exist in workspace).
+        prompt: Instructions for the child agent describing what to do.
+    """
+    task_id = os.environ.get("MULTICA_TASK_ID", "")
+    if not task_id:
+        return {"error": "MULTICA_TASK_ID not set — cannot create child tasks outside orchestration"}
+    return _request("POST", f"/api/daemon/tasks/{task_id}/children", {
+        "agent_name": agent_name,
+        "prompt": prompt,
+    })
+
+
 # ── Tool registry ────────────────────────────────────────────────────────────
 
 ALL_TOOLS = [
@@ -186,4 +210,5 @@ ALL_TOOLS = [
     create_document,
     create_docx,
     create_xlsx,
+    create_child_task,
 ]

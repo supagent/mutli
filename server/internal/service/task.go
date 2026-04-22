@@ -20,13 +20,14 @@ import (
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
-// Sentinel errors for RetryTask.
+// Sentinel errors.
 var (
-	ErrTaskNotFound    = errors.New("task not found")
+	ErrTaskNotFound     = errors.New("task not found")
 	ErrTaskNotRetryable = errors.New("task is not retryable: only failed or cancelled tasks can be retried")
-	ErrAlreadyRetried  = errors.New("task has already been retried")
+	ErrAlreadyRetried   = errors.New("task has already been retried")
 	ErrActiveTaskExists = errors.New("an active task already exists for this issue")
-	ErrIssueClosed     = errors.New("cannot retry: issue is done")
+	ErrIssueClosed      = errors.New("cannot retry: issue is done")
+	ErrChildNotRetryable = errors.New("child tasks cannot be retried directly — retry the parent task instead")
 )
 
 type TaskService struct {
@@ -176,11 +177,26 @@ func (s *TaskService) CancelTask(ctx context.Context, taskID pgtype.UUID) (*db.A
 
 	slog.Info("task cancelled", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 
+	// If this is a parent task, cascade cancel to active children.
+	children, err := s.Queries.ListChildTasks(ctx, task.ID)
+	if err == nil {
+		for _, child := range children {
+			if child.Status == "queued" || child.Status == "dispatched" || child.Status == "running" {
+				s.CancelTask(ctx, child.ID)
+			}
+		}
+	}
+
 	// Reconcile agent status
 	s.ReconcileAgentStatus(ctx, task.AgentID)
 
 	// Broadcast cancellation so frontends clear the live card
 	s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
+
+	// If this is a child task, check if all siblings are done → reactivate parent.
+	if task.ParentTaskID.Valid {
+		s.checkChildrenComplete(ctx, task.ParentTaskID)
+	}
 
 	return &task, nil
 }
@@ -196,6 +212,11 @@ func (s *TaskService) RetryTask(ctx context.Context, taskID pgtype.UUID, workspa
 			return nil, ErrTaskNotFound
 		}
 		return nil, fmt.Errorf("get task: %w", err)
+	}
+
+	// Child tasks cannot be retried directly.
+	if original.ParentTaskID.Valid {
+		return nil, ErrChildNotRetryable
 	}
 
 	// Only failed or cancelled tasks can be retried.
@@ -434,6 +455,11 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// Broadcast
 	s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
 
+	// If this is a child task, check if all siblings are done → reactivate parent.
+	if task.ParentTaskID.Valid {
+		s.checkChildrenComplete(ctx, task.ParentTaskID)
+	}
+
 	return &task, nil
 }
 
@@ -471,6 +497,11 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg s
 
 	// Broadcast
 	s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, task)
+
+	// If this is a child task, check if all siblings are done → reactivate parent.
+	if task.ParentTaskID.Valid {
+		s.checkChildrenComplete(ctx, task.ParentTaskID)
+	}
 
 	return &task, nil
 }
@@ -785,5 +816,84 @@ func agentToMap(a db.Agent) map[string]any {
 		"updated_at":           util.TimestampToString(a.UpdatedAt),
 		"archived_at":          util.TimestampToPtr(a.ArchivedAt),
 		"archived_by":          util.UUIDToPtr(a.ArchivedBy),
+	}
+}
+
+// ── Parent-child task orchestration ─────────────────────────────────────────
+
+// CreateChildTask creates a worker task under a parent orchestrator task.
+// The child can target a different agent (cross-runtime delegation).
+func (s *TaskService) CreateChildTask(ctx context.Context, parentTaskID pgtype.UUID, agentID pgtype.UUID, issueID pgtype.UUID, priority int32) (db.AgentTaskQueue, error) {
+	agent, err := s.Queries.GetAgent(ctx, agentID)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
+	}
+	if agent.ArchivedAt.Valid {
+		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
+	}
+	if !agent.RuntimeID.Valid {
+		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
+	}
+
+	child, err := s.Queries.CreateChildTask(ctx, db.CreateChildTaskParams{
+		AgentID:      agentID,
+		RuntimeID:    agent.RuntimeID,
+		IssueID:      issueID,
+		Priority:     priority,
+		ParentTaskID: parentTaskID,
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("create child task: %w", err)
+	}
+
+	slog.Info("child task created",
+		"child_task_id", util.UUIDToString(child.ID),
+		"parent_task_id", util.UUIDToString(parentTaskID),
+		"agent_id", util.UUIDToString(agentID),
+		"issue_id", util.UUIDToString(issueID),
+	)
+
+	// Broadcast so frontends show the new child.
+	s.broadcastTaskDispatch(ctx, child)
+
+	return child, nil
+}
+
+// TransitionToWaiting moves a running orchestrator task to the waiting state.
+// Called after the orchestrator has spawned child tasks and exited the sandbox.
+func (s *TaskService) TransitionToWaiting(ctx context.Context, taskID pgtype.UUID) error {
+	if err := s.Queries.SetTaskWaiting(ctx, taskID); err != nil {
+		return fmt.Errorf("set task waiting: %w", err)
+	}
+	slog.Info("task waiting for children", "task_id", util.UUIDToString(taskID))
+	return nil
+}
+
+// checkChildrenComplete checks if all children of a parent task are done.
+// If so, reactivates the parent as a synthesizer task.
+func (s *TaskService) checkChildrenComplete(ctx context.Context, parentTaskID pgtype.UUID) {
+	active, err := s.Queries.CountActiveChildren(ctx, parentTaskID)
+	if err != nil {
+		slog.Error("count active children failed", "parent_task_id", util.UUIDToString(parentTaskID), "error", err)
+		return
+	}
+	if active > 0 {
+		return
+	}
+
+	// All children done — reactivate parent for synthesis.
+	// Atomic: WHERE status='waiting' ensures only one caller wins.
+	if err := s.Queries.ReactivateWaitingTask(ctx, parentTaskID); err != nil {
+		slog.Debug("reactivate waiting task: no-op (already reactivated or not waiting)",
+			"parent_task_id", util.UUIDToString(parentTaskID))
+		return
+	}
+
+	slog.Info("parent task reactivated for synthesis",
+		"parent_task_id", util.UUIDToString(parentTaskID))
+
+	// Broadcast task:dispatch so the daemon picks up the synthesis task.
+	if task, err := s.Queries.GetAgentTask(ctx, parentTaskID); err == nil {
+		s.broadcastTaskDispatch(ctx, task)
 	}
 }

@@ -87,6 +87,8 @@ type AgentTaskQueue struct {
 	TriggerCommentID pgtype.UUID        `json:"trigger_comment_id"`
 	ChatSessionID    pgtype.UUID        `json:"chat_session_id"`
 	RetriedFromID    pgtype.UUID        `json:"retried_from_id"`
+	ParentTaskID     pgtype.UUID        `json:"parent_task_id"`
+	Role             pgtype.Text        `json:"role"`
 }
 
 type Attachment struct {

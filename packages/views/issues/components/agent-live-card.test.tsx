@@ -11,6 +11,7 @@ const mockListTasksByIssue = vi.fn();
 const mockGetActiveTasksForIssue = vi.fn();
 const mockListTaskMessages = vi.fn();
 const mockCancelTask = vi.fn();
+const mockListChildTasks = vi.fn();
 
 vi.mock("@multica/core/api", () => ({
   api: {
@@ -19,6 +20,7 @@ vi.mock("@multica/core/api", () => ({
     getActiveTasksForIssue: (...args: any[]) => mockGetActiveTasksForIssue(...args),
     listTaskMessages: (...args: any[]) => mockListTaskMessages(...args),
     cancelTask: (...args: any[]) => mockCancelTask(...args),
+    listChildTasks: (...args: any[]) => mockListChildTasks(...args),
   },
 }));
 
@@ -54,6 +56,15 @@ vi.mock("@multica/ui/markdown", () => ({
   ),
 }));
 
+vi.mock("@multica/ui/components/ai-elements/chain-of-thought", () => ({
+  ChainOfThought: ({ children, className }: any) => <div data-testid="chain-of-thought" className={className}>{children}</div>,
+  ChainOfThoughtHeader: ({ children }: any) => <div data-testid="chain-of-thought-header">{children}</div>,
+  ChainOfThoughtStep: ({ label, status, description }: any) => (
+    <div data-testid="chain-of-thought-step" data-status={status}>{label} — {description}</div>
+  ),
+  ChainOfThoughtContent: ({ children }: any) => <div>{children}</div>,
+}));
+
 // Import after mocks
 import { TaskRunHistory, buildTimeline } from "./agent-live-card";
 
@@ -75,6 +86,8 @@ function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
     result: null,
     error: "Sandbox timeout after 150s",
     retried_from_id: null,
+    parent_task_id: null,
+    role: null,
     created_at: "2026-04-16T02:28:00Z",
     ...overrides,
   };
@@ -403,5 +416,56 @@ describe("Delegation row rendering", () => {
 
     await waitFor(() => expect(screen.getByText(/Delegated to/)).toBeInTheDocument());
     expect(screen.queryByText("transfer_to_agent")).not.toBeInTheDocument();
+  });
+});
+
+describe("Parent-child task display", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetActiveTasksForIssue.mockResolvedValue({ tasks: [] });
+    mockListTaskMessages.mockResolvedValue([]);
+    mockListChildTasks.mockResolvedValue([]);
+  });
+
+  async function expandHistory() {
+    await waitFor(() => expect(screen.getByText(/Execution history/)).toBeInTheDocument());
+    fireEvent.click(screen.getByText(/Execution history/));
+  }
+
+  async function expandTaskEntry() {
+    const statusEl = await waitFor(() => screen.getByText(/completed|waiting/i));
+    const trigger = statusEl.closest("button") || statusEl.parentElement;
+    if (trigger) fireEvent.click(trigger);
+  }
+
+  it("shows 'Waiting for child tasks' when task status is waiting", async () => {
+    const task = makeTask({ status: "waiting", role: "orchestrator" });
+    mockListTasksByIssue.mockResolvedValue([task]);
+    mockListChildTasks.mockResolvedValue([
+      makeTask({ id: "child-1", status: "running", parent_task_id: "task-1", role: "worker" }),
+    ]);
+
+    render(<TaskRunHistory issueId="issue-1" />);
+    await expandHistory();
+    await expandTaskEntry();
+
+    await waitFor(() => expect(screen.getByText(/waiting/i)).toBeInTheDocument());
+  });
+
+  it("renders child tasks with correct status indicators", async () => {
+    const parent = makeTask({ status: "completed", role: "orchestrator" });
+    mockListTasksByIssue.mockResolvedValue([parent]);
+    mockListTaskMessages.mockResolvedValue([]);
+    mockListChildTasks.mockResolvedValue([
+      makeTask({ id: "child-1", status: "completed", parent_task_id: "task-1", role: "worker", agent_id: "agent-researcher" }),
+      makeTask({ id: "child-2", status: "completed", parent_task_id: "task-1", role: "worker", agent_id: "agent-writer" }),
+    ]);
+
+    render(<TaskRunHistory issueId="issue-1" />);
+    await expandHistory();
+    await expandTaskEntry();
+
+    // Should show child task count
+    await waitFor(() => expect(screen.getByText(/2.*task/i)).toBeInTheDocument());
   });
 });

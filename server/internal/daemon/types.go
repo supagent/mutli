@@ -30,12 +30,14 @@ type Task struct {
 	WorkspaceID    string     `json:"workspace_id"`
 	Agent          *AgentData `json:"agent,omitempty"`
 	Repos          []RepoData `json:"repos,omitempty"`
-	PriorSessionID   string     `json:"prior_session_id,omitempty"`    // Claude session ID from a previous task on this issue
-	PriorWorkDir     string     `json:"prior_work_dir,omitempty"`     // work_dir from a previous task on this issue
-	TriggerCommentID      string     `json:"trigger_comment_id,omitempty"`      // comment that triggered this task
-	TriggerCommentContent string     `json:"trigger_comment_content,omitempty"` // content of the triggering comment
-	ChatSessionID         string     `json:"chat_session_id,omitempty"`         // non-empty for chat tasks
-	ChatMessage           string     `json:"chat_message,omitempty"`            // user message content for chat tasks
+	PriorSessionID        string `json:"prior_session_id,omitempty"`
+	PriorWorkDir          string `json:"prior_work_dir,omitempty"`
+	TriggerCommentID      string `json:"trigger_comment_id,omitempty"`
+	TriggerCommentContent string `json:"trigger_comment_content,omitempty"`
+	ChatSessionID         string `json:"chat_session_id,omitempty"`
+	ChatMessage           string `json:"chat_message,omitempty"`
+	ParentTaskID          string `json:"parent_task_id,omitempty"`
+	Role                  string `json:"role,omitempty"` // orchestrator, worker, synthesizer
 }
 
 // SubAgentData holds sub-agent definitions for multi-agent orchestration.
