@@ -64,7 +64,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 			DefaultModel:    cfg.EmbeddedModel,
 			DefaultMaxTurns: cfg.EmbeddedMaxTurns,
 			GeminiAPIKey:    cfg.FallbackAPIKey,
-			MulicaAPIURL:    cfg.ServerBaseURL,
+			MulicaAPIURL:    envOrDefault("MULTICA_SANDBOX_API_URL", cfg.ServerBaseURL),
 		}, logger)
 		if err != nil {
 			logger.Warn("failed to initialize sandbox manager — embedded runtime disabled", "error", err)
