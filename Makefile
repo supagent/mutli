@@ -182,6 +182,26 @@ server:
 daemon:
 	@$(MAKE) multica MULTICA_ARGS="daemon"
 
+## Build, install, and (re)start daemon in foreground — one command for development.
+## Always runs the latest code. Use this instead of manual make install + daemon restart.
+daemon-dev: install
+	@-multica daemon stop 2>/dev/null; sleep 1
+	@echo "Starting daemon ($(VERSION))..."
+	multica daemon start --foreground
+
+## Start everything: backend, frontend, and daemon (all foreground, Ctrl+C kills all)
+dev-full:
+	$(REQUIRE_ENV)
+	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
+	@$(MAKE) install
+	@-multica daemon stop 2>/dev/null
+	@echo "Starting backend ($(PORT)), frontend ($(FRONTEND_PORT)), and daemon..."
+	@trap 'kill 0' EXIT; \
+		(cd server && go run ./cmd/server) & \
+		pnpm dev:web & \
+		(sleep 3 && multica daemon start --foreground) & \
+		wait
+
 ## Start ModelRelay (free LLM proxy for OpenHarness agent, localhost:7352)
 modelrelay:
 	@echo "Starting ModelRelay on http://localhost:7352 ..."
