@@ -55,7 +55,7 @@ vi.mock("@multica/ui/markdown", () => ({
 }));
 
 // Import after mocks
-import { TaskRunHistory } from "./agent-live-card";
+import { TaskRunHistory, buildTimeline } from "./agent-live-card";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -286,15 +286,122 @@ describe("Multi-agent timeline rendering", () => {
     const task = makeTask({ status: "completed" });
     mockListTasksByIssue.mockResolvedValue([task]);
     mockListTaskMessages.mockResolvedValue([
-      { task_id: "task-1", issue_id: "issue-1", seq: 1, type: "tool_use", tool: "transfer_to_agent", agent_name: "multica_agent" },
+      { task_id: "task-1", issue_id: "issue-1", seq: 1, type: "tool_use", tool: "get_issue", agent_name: "multica_agent", input: { issue_id: "123" } },
     ]);
 
     render(<TaskRunHistory issueId="issue-1" />);
     await expandHistory();
     await expandTaskEntry();
 
-    await waitFor(() => expect(screen.getByText("transfer_to_agent")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("get_issue")).toBeInTheDocument());
     // multica_agent should NOT render as a badge
     expect(screen.queryByText("multica_agent")).not.toBeInTheDocument();
+  });
+});
+
+describe("buildTimeline delegation transform", () => {
+  it("converts transfer_to_agent tool_use into delegation item", () => {
+    const msgs = [
+      { task_id: "t1", issue_id: "i1", seq: 1, type: "tool_use" as const, tool: "transfer_to_agent", input: { agent_name: "Researcher" }, agent_name: "multica_agent" },
+      { task_id: "t1", issue_id: "i1", seq: 2, type: "tool_result" as const, tool: "transfer_to_agent", output: '{"result": null}', agent_name: "multica_agent" },
+      { task_id: "t1", issue_id: "i1", seq: 3, type: "text" as const, content: "Research findings", agent_name: "Researcher" },
+    ];
+    const items = buildTimeline(msgs);
+    const delegation = items.find(i => i.type === "delegation");
+    expect(delegation).toBeDefined();
+    expect(delegation!.delegation_target).toBe("Researcher");
+  });
+
+  it("removes transfer_to_agent tool_result (always null)", () => {
+    const msgs = [
+      { task_id: "t1", issue_id: "i1", seq: 1, type: "tool_use" as const, tool: "transfer_to_agent", input: { agent_name: "Researcher" }, agent_name: "multica_agent" },
+      { task_id: "t1", issue_id: "i1", seq: 2, type: "tool_result" as const, tool: "transfer_to_agent", output: '{"result": null}', agent_name: "multica_agent" },
+    ];
+    const items = buildTimeline(msgs);
+    const toolResults = items.filter(i => i.type === "tool_result" && i.tool === "transfer_to_agent");
+    expect(toolResults).toHaveLength(0);
+  });
+
+  it("handles chained delegations (researcher → writer)", () => {
+    const msgs = [
+      { task_id: "t1", issue_id: "i1", seq: 1, type: "tool_use" as const, tool: "transfer_to_agent", input: { agent_name: "Researcher" }, agent_name: "multica_agent" },
+      { task_id: "t1", issue_id: "i1", seq: 2, type: "tool_result" as const, tool: "transfer_to_agent", output: '{"result": null}', agent_name: "multica_agent" },
+      { task_id: "t1", issue_id: "i1", seq: 3, type: "text" as const, content: "Findings", agent_name: "Researcher" },
+      { task_id: "t1", issue_id: "i1", seq: 4, type: "tool_use" as const, tool: "transfer_to_agent", input: { agent_name: "Writer" }, agent_name: "Researcher" },
+      { task_id: "t1", issue_id: "i1", seq: 5, type: "tool_result" as const, tool: "transfer_to_agent", output: '{"result": null}', agent_name: "Researcher" },
+      { task_id: "t1", issue_id: "i1", seq: 6, type: "text" as const, content: "Report", agent_name: "Writer" },
+    ];
+    const items = buildTimeline(msgs);
+    const delegations = items.filter(i => i.type === "delegation");
+    expect(delegations).toHaveLength(2);
+    expect(delegations[0]!.delegation_target).toBe("Researcher");
+    expect(delegations[1]!.delegation_target).toBe("Writer");
+  });
+
+  it("preserves normal tool calls unchanged", () => {
+    const msgs = [
+      { task_id: "t1", issue_id: "i1", seq: 1, type: "tool_use" as const, tool: "research_tool", input: { query: "AI" }, agent_name: "Researcher" },
+      { task_id: "t1", issue_id: "i1", seq: 2, type: "tool_result" as const, tool: "research_tool", output: '{"data": true}', agent_name: "Researcher" },
+    ];
+    const items = buildTimeline(msgs);
+    expect(items).toHaveLength(2);
+    expect(items[0]!.type).toBe("tool_use");
+    expect(items[0]!.tool).toBe("research_tool");
+    expect(items[1]!.type).toBe("tool_result");
+  });
+
+  it("converts old text-type setup messages to setup type", () => {
+    const msgs = [
+      { task_id: "t1", issue_id: "i1", seq: 1, type: "text" as const, content: "Creating sandbox environment...Sandbox ready. Uploading agent...Starting agent..." },
+    ];
+    const items = buildTimeline(msgs);
+    expect(items[0]!.type).toBe("setup");
+  });
+
+  it("passes through new setup-type messages unchanged", () => {
+    const msgs = [
+      { task_id: "t1", issue_id: "i1", seq: 1, type: "setup" as const, content: "Creating sandbox" },
+      { task_id: "t1", issue_id: "i1", seq: 2, type: "setup" as const, content: "Uploading agent" },
+      { task_id: "t1", issue_id: "i1", seq: 3, type: "setup" as const, content: "Starting agent" },
+    ];
+    const items = buildTimeline(msgs);
+    const setupItems = items.filter(i => i.type === "setup");
+    expect(setupItems).toHaveLength(3);
+  });
+});
+
+describe("Delegation row rendering", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetActiveTasksForIssue.mockResolvedValue({ tasks: [] });
+    mockListTaskMessages.mockResolvedValue([]);
+  });
+
+  async function expandHistory() {
+    await waitFor(() => expect(screen.getByText(/Execution history/)).toBeInTheDocument());
+    fireEvent.click(screen.getByText(/Execution history/));
+  }
+
+  async function expandTaskEntry() {
+    const statusEl = await waitFor(() => screen.getByText("completed"));
+    const trigger = statusEl.closest("button") || statusEl.parentElement;
+    if (trigger) fireEvent.click(trigger);
+  }
+
+  it("renders 'Delegated to' text instead of transfer_to_agent", async () => {
+    const task = makeTask({ status: "completed" });
+    mockListTasksByIssue.mockResolvedValue([task]);
+    mockListTaskMessages.mockResolvedValue([
+      { task_id: "task-1", issue_id: "issue-1", seq: 1, type: "tool_use", tool: "transfer_to_agent", input: { agent_name: "Researcher" }, agent_name: "multica_agent" },
+      { task_id: "task-1", issue_id: "issue-1", seq: 2, type: "tool_result", tool: "transfer_to_agent", output: '{"result": null}', agent_name: "multica_agent" },
+      { task_id: "task-1", issue_id: "issue-1", seq: 3, type: "text", content: "Research output", agent_name: "Researcher" },
+    ]);
+
+    render(<TaskRunHistory issueId="issue-1" />);
+    await expandHistory();
+    await expandTaskEntry();
+
+    await waitFor(() => expect(screen.getByText(/Delegated to/)).toBeInTheDocument());
+    expect(screen.queryByText("transfer_to_agent")).not.toBeInTheDocument();
   });
 });

@@ -50,6 +50,7 @@ const (
 	MessageToolUse    MessageType = "tool-use"
 	MessageToolResult MessageType = "tool-result"
 	MessageStatus     MessageType = "status"
+	MessageSetup      MessageType = "setup"
 	MessageError      MessageType = "error"
 	MessageLog        MessageType = "log"
 )

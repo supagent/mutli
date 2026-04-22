@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Bot, ChevronRight, ChevronDown, Loader2, ArrowDown, Brain, AlertCircle, Clock, CheckCircle2, XCircle, MinusCircle, Square, Maximize2, RotateCcw } from "lucide-react";
+import { Bot, ChevronRight, ChevronDown, Loader2, ArrowDown, ArrowRight, Brain, AlertCircle, Clock, CheckCircle2, XCircle, MinusCircle, Square, Maximize2, RotateCcw } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWSEvent } from "@multica/core/realtime";
 import type { TaskMessagePayload, TaskCompletedPayload, TaskFailedPayload, TaskCancelledPayload } from "@multica/core/types/events";
@@ -18,14 +18,15 @@ import { Markdown } from "@multica/ui/markdown";
 // ─── Shared types & helpers ─────────────────────────────────────────────────
 
 /** A unified timeline entry: tool calls, thinking, text, and errors in chronological order. */
-interface TimelineItem {
+export interface TimelineItem {
   seq: number;
-  type: "tool_use" | "tool_result" | "thinking" | "text" | "error";
+  type: "tool_use" | "tool_result" | "thinking" | "text" | "error" | "delegation" | "setup";
   tool?: string;
   content?: string;
   input?: Record<string, unknown>;
   output?: string;
   agent_name?: string;
+  delegation_target?: string;
 }
 
 function formatElapsed(startedAt: string): string {
@@ -82,17 +83,51 @@ function getToolSummary(item: TimelineItem): string {
   return "";
 }
 
-/** Build a chronologically ordered timeline from raw messages. */
-function buildTimeline(msgs: TaskMessagePayload[]): TimelineItem[] {
+/** Build a chronologically ordered timeline from raw messages.
+ *  Transforms ADK plumbing into user-facing events:
+ *  - transfer_to_agent tool_use → delegation indicator
+ *  - transfer_to_agent tool_result → removed (always null)
+ *  - old text-type setup messages → setup type
+ */
+export function buildTimeline(msgs: TaskMessagePayload[]): TimelineItem[] {
+  const SETUP_PATTERN = /^(Creating sandbox|Sandbox ready|Uploading agent|Starting agent)/;
+
   const items: TimelineItem[] = [];
   for (const msg of msgs) {
+    const content = msg.content ? redactSecrets(msg.content) : msg.content;
+    const output = msg.output ? redactSecrets(msg.output) : msg.output;
+
+    // transfer_to_agent tool_use → delegation indicator
+    if (msg.type === "tool_use" && msg.tool === "transfer_to_agent") {
+      const target = (msg.input?.agent_name as string) || "agent";
+      items.push({
+        seq: msg.seq,
+        type: "delegation",
+        delegation_target: target,
+        content: `Delegated to ${target}`,
+        agent_name: msg.agent_name,
+      });
+      continue;
+    }
+
+    // transfer_to_agent tool_result → skip (always {"result": null})
+    if (msg.type === "tool_result" && msg.tool === "transfer_to_agent") {
+      continue;
+    }
+
+    // Old text-type setup messages → convert to setup type
+    if (msg.type === "text" && content && SETUP_PATTERN.test(content)) {
+      items.push({ seq: msg.seq, type: "setup", content });
+      continue;
+    }
+
     items.push({
       seq: msg.seq,
-      type: msg.type,
+      type: msg.type as TimelineItem["type"],
       tool: msg.tool,
-      content: msg.content ? redactSecrets(msg.content) : msg.content,
+      content,
       input: msg.input,
-      output: msg.output ? redactSecrets(msg.output) : msg.output,
+      output,
       agent_name: msg.agent_name,
     });
   }
@@ -402,9 +437,7 @@ function SingleAgentLiveCard({ task, items, issueId, agentName }: SingleAgentLiv
               onScroll={handleScroll}
               className="relative max-h-80 overflow-y-auto overscroll-y-contain border-t border-info/10 px-3 py-2 space-y-0.5"
             >
-              {items.map((item, idx) => (
-                <TimelineRow key={`${item.seq}-${idx}`} item={item} />
-              ))}
+              {renderTimelineItems(items)}
 
               {!autoScroll && (
                 <button
@@ -680,7 +713,7 @@ function AgentBadge({ name }: { name?: string }) {
 
 function TickerPreview({ text }: { text: string }) {
   const ref = useRef<HTMLSpanElement>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval>>();
+  const intervalRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const startScroll = useCallback(() => {
     const el = ref.current;
@@ -743,7 +776,80 @@ function SubAgentCollapsible({ name, content, children }: { name: string; conten
   );
 }
 
+/** Render timeline items, grouping consecutive setup items into a stepper. */
+function renderTimelineItems(items: TimelineItem[]) {
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+  while (i < items.length) {
+    const item = items[i]!;
+    if (item.type === "setup") {
+      const steps: TimelineItem[] = [];
+      while (i < items.length && items[i]!.type === "setup") {
+        steps.push(items[i]!);
+        i++;
+      }
+      const isComplete = i < items.length;
+      elements.push(<SetupStepperRow key={`setup-${steps[0]!.seq}`} steps={steps} isComplete={isComplete} />);
+    } else {
+      elements.push(<TimelineRow key={`${item.seq}-${i}`} item={item} />);
+      i++;
+    }
+  }
+  return elements;
+}
+
+function DelegationRow({ item }: { item: TimelineItem }) {
+  return (
+    <div className="flex items-center gap-1.5 px-1 -mx-1 py-1 text-xs">
+      <ArrowRight className="h-3 w-3 shrink-0 text-purple-500" />
+      <span className="text-muted-foreground">
+        Delegated to{" "}
+        <span className="font-medium text-foreground">{item.delegation_target}</span>
+      </span>
+    </div>
+  );
+}
+
+function SetupStepperRow({ steps, isComplete }: { steps: TimelineItem[]; isComplete: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className="flex items-center gap-1.5 rounded px-1 -mx-1 py-0.5 text-xs text-muted-foreground hover:bg-accent/30 transition-colors">
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        {isComplete ? (
+          <CheckCircle2 className="h-3 w-3 shrink-0 text-success" />
+        ) : (
+          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-info" />
+        )}
+        <span>{isComplete ? "Environment ready" : "Setting up..."}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="ml-4 space-y-0.5 py-0.5">
+          {steps.map((step, i) => {
+            const isDone = i < steps.length - 1 || isComplete;
+            return (
+              <div key={step.seq} className="flex items-center gap-1.5 py-0.5 text-xs text-muted-foreground/70">
+                {isDone ? (
+                  <CheckCircle2 className="h-3 w-3 shrink-0 text-success/60" />
+                ) : (
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin text-info/60" />
+                )}
+                <span>{step.content}</span>
+              </div>
+            );
+          })}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function TimelineRow({ item }: { item: TimelineItem }) {
+  // Delegation rows render standalone — no SubAgentCollapsible wrapping
+  if (item.type === "delegation") {
+    return <DelegationRow item={item} />;
+  }
+
   const badge = item.agent_name && item.agent_name !== "multica_agent" ? (
     <AgentBadge name={item.agent_name} />
   ) : null;

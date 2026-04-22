@@ -1424,6 +1424,15 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					AgentName: msg.AgentName,
 				})
 				mu.Unlock()
+			case agent.MessageSetup:
+				s := seq.Add(1)
+				mu.Lock()
+				batch = append(batch, TaskMessageData{
+					Seq:     int(s),
+					Type:    "setup",
+					Content: msg.Content,
+				})
+				mu.Unlock()
 			}
 		}
 

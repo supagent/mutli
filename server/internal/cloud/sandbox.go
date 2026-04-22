@@ -120,7 +120,7 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 	// Create message channel early so we can send lifecycle status updates.
 	msgCh := make(chan agent.Message, 256)
 
-	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Creating sandbox environment..."})
+	trySendCloud(msgCh, agent.Message{Type: agent.MessageSetup, Content: "Creating sandbox"})
 
 	// Build sandbox image: Python + ADK deps from pinned requirements.txt.
 	// Image is cached by Daytona after first build — sub-second subsequent creates.
@@ -160,7 +160,7 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		return nil, fmt.Errorf("create sandbox: %w", err)
 	}
 	sm.logger.Info("sandbox created", "task", taskCfg.TaskID, "sandbox", sandbox.ID)
-	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Sandbox ready. Uploading agent..."})
+	trySendCloud(msgCh, agent.Message{Type: agent.MessageSetup, Content: "Uploading agent"})
 
 	// Upload ADK agent Python files (embedded at compile time).
 	sandbox.Process.ExecuteCommand(runCtx, "mkdir -p /workspace/agent /workspace/output")
@@ -230,7 +230,7 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		subAgentsArg,
 	)
 
-	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Starting agent..."})
+	trySendCloud(msgCh, agent.Message{Type: agent.MessageSetup, Content: "Starting agent"})
 	sm.logger.Info("running ADK agent in sandbox", "task", taskCfg.TaskID, "model", model)
 
 	// Execute via PTY for streaming output
