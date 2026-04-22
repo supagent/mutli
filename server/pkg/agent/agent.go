@@ -30,6 +30,7 @@ type ExecOptions struct {
 	IssueID         string        // issue ID (for embedded agent)
 	WorkspaceID     string        // workspace ID (for embedded agent API calls)
 	SubAgents       []SubAgentDef // sub-agent definitions for multi-agent orchestration
+	Role            string        // task role: orchestrator, worker, synthesizer
 }
 
 // Session represents a running agent execution.

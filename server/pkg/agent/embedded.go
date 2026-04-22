@@ -37,6 +37,7 @@ type SandboxTaskConfig struct {
 	SystemPrompt string
 	Timeout      time.Duration
 	SubAgents    []SubAgentDef
+	Role         string
 }
 
 func (b *EmbeddedBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
@@ -57,5 +58,6 @@ func (b *EmbeddedBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		SystemPrompt: opts.SystemPrompt,
 		Timeout:      opts.Timeout,
 		SubAgents:    opts.SubAgents,
+		Role:         opts.Role,
 	})
 }

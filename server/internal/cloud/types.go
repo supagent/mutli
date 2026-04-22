@@ -29,4 +29,5 @@ type TaskExecConfig struct {
 	SystemPrompt string              // Additional system prompt
 	Timeout      time.Duration      // Execution timeout (0 = 20min default)
 	SubAgents    []agent.SubAgentDef // Sub-agent definitions for multi-agent orchestration
+	Role         string              // Task role: orchestrator, worker, synthesizer
 }

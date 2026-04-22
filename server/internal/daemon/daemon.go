@@ -1039,6 +1039,7 @@ func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.L
 		Model:       d.cfg.EmbeddedModel,
 		MaxTurns:    d.cfg.EmbeddedMaxTurns,
 		Timeout:     d.cfg.AgentTimeout,
+		Role:        task.Role,
 	}
 	if task.Agent != nil {
 		if task.Agent.Instructions != "" {

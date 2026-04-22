@@ -85,6 +85,7 @@ func (sm *SandboxManager) Execute(ctx context.Context, cfg agent.SandboxTaskConf
 		SystemPrompt: cfg.SystemPrompt,
 		Timeout:      cfg.Timeout,
 		SubAgents:    cfg.SubAgents,
+		Role:         cfg.Role,
 	}
 	return sm.execute(ctx, taskCfg)
 }
@@ -228,7 +229,11 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 	if taskCfg.SystemPrompt != "" {
 		systemPromptArg = " --system-prompt " + shellQuote(taskCfg.SystemPrompt)
 	}
-	cmd := fmt.Sprintf("cd /workspace/agent && python3 multica_agent.py --task-id %s --issue-id %s --prompt %s --model %s --max-turns %d%s%s\nexit\n",
+	roleArg := ""
+	if taskCfg.Role != "" {
+		roleArg = " --role " + shellQuote(taskCfg.Role)
+	}
+	cmd := fmt.Sprintf("cd /workspace/agent && python3 multica_agent.py --task-id %s --issue-id %s --prompt %s --model %s --max-turns %d%s%s%s\nexit\n",
 		shellQuote(taskCfg.TaskID),
 		shellQuote(taskCfg.IssueID),
 		shellQuote(taskCfg.Prompt),
@@ -236,6 +241,7 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		maxTurns,
 		subAgentsArg,
 		systemPromptArg,
+		roleArg,
 	)
 
 	trySendCloud(msgCh, agent.Message{Type: agent.MessageSetup, Content: "Starting agent"})
