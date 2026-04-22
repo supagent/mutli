@@ -63,7 +63,7 @@ RETURNING *;
 -- name: CancelAgentTasksByIssue :exec
 UPDATE agent_task_queue
 SET status = 'cancelled'
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running');
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting');
 
 -- name: CancelAgentTasksByAgent :exec
 UPDATE agent_task_queue
@@ -143,7 +143,7 @@ RETURNING id, agent_id, issue_id;
 -- name: CancelAgentTask :one
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING *;
 
 -- name: CountRunningTasks :one

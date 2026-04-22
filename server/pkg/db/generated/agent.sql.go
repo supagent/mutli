@@ -50,7 +50,7 @@ func (q *Queries) ArchiveAgent(ctx context.Context, arg ArchiveAgentParams) (Age
 const cancelAgentTask = `-- name: CancelAgentTask :one
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, retried_from_id, parent_task_id, role
 `
 
@@ -96,7 +96,7 @@ func (q *Queries) CancelAgentTasksByAgent(ctx context.Context, agentID pgtype.UU
 const cancelAgentTasksByIssue = `-- name: CancelAgentTasksByIssue :exec
 UPDATE agent_task_queue
 SET status = 'cancelled'
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 `
 
 func (q *Queries) CancelAgentTasksByIssue(ctx context.Context, issueID pgtype.UUID) error {
