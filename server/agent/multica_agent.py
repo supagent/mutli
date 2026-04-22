@@ -129,11 +129,19 @@ async def run(task_id: str, issue_id: str, prompt: str, model: str, max_turns: i
     # Load sub-agent definitions for multi-agent orchestration.
     sub_agents = _load_sub_agents(sub_agents_path, model, max_turns)
 
+    # Phase 1 (sub_agents) and Phase 2 (create_child_task) are mutually exclusive.
+    # When sub_agents are configured, ADK's transfer_to_agent always wins over
+    # create_child_task regardless of instructions. Remove create_child_task to
+    # avoid confusion. When no sub_agents, create_child_task is available for
+    # cross-runtime delegation.
+    from tools import create_child_task as _cct
+    agent_tools = [t for t in ALL_TOOLS if t is not _cct] if sub_agents else ALL_TOOLS
+
     agent = Agent(
         name="multica_agent",
         model=model,
         instruction=SYSTEM_PROMPT,
-        tools=ALL_TOOLS,
+        tools=agent_tools,
         before_model_callback=make_turn_limiter(max_turns),
         **({"sub_agents": sub_agents} if sub_agents else {}),
     )
