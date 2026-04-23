@@ -1,6 +1,5 @@
 "use client";
 
-import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import { Badge } from "@multica/ui/components/ui/badge";
 import {
   Collapsible,
@@ -11,7 +10,7 @@ import { cn } from "@multica/ui/lib/utils";
 import type { LucideIcon } from "lucide-react";
 import { BrainIcon, ChevronDownIcon, DotIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
-import { createContext, memo, useContext, useMemo } from "react";
+import { createContext, memo, useCallback, useContext, useMemo, useState } from "react";
 
 interface ChainOfThoughtContextValue {
   isOpen: boolean;
@@ -47,11 +46,12 @@ export const ChainOfThought = memo(
     children,
     ...props
   }: ChainOfThoughtProps) => {
-    const [isOpen, setIsOpen] = useControllableState({
-      defaultProp: defaultOpen,
-      onChange: onOpenChange,
-      prop: open,
-    });
+    const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+    const isOpen = open ?? uncontrolledOpen;
+    const setIsOpen = useCallback((value: boolean) => {
+      if (open === undefined) setUncontrolledOpen(value);
+      onOpenChange?.(value);
+    }, [open, onOpenChange]);
 
     const chainOfThoughtContext = useMemo(
       () => ({ isOpen, setIsOpen }),

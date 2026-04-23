@@ -108,8 +108,8 @@ export function SubAgentsTab({
               key={subAgent.id}
               className="flex items-center gap-3 rounded-lg border px-4 py-3"
             >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-purple-100 dark:bg-purple-900/30">
-                <Bot className="h-4 w-4 text-purple-600 dark:text-purple-300" />
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <Bot className="h-4 w-4 text-primary" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{subAgent.name}</div>
@@ -151,7 +151,7 @@ export function SubAgentsTab({
                   disabled={saving}
                   className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent/50"
                 >
-                  <Bot className="h-4 w-4 shrink-0 text-purple-500" />
+                  <Bot className="h-4 w-4 shrink-0 text-primary" />
                   <div className="min-w-0 flex-1">
                     <div className="font-medium">{a.name}</div>
                     {a.description && (

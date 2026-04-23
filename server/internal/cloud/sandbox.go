@@ -215,7 +215,10 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		return nil, fmt.Errorf("pty connect: %w", err)
 	}
 
-	// Scale maxTurns for orchestrators: each sub-agent needs its own turn budget.
+	// Scale maxTurns for orchestrators: the total sandbox turn budget must
+	// accommodate the orchestrator + all sub-agents. Each sub-agent has its
+	// own independent turn limiter (before_model_callback) so the per-agent
+	// cap stays at baseTurns — this only affects the global sandbox ceiling.
 	if len(taskCfg.SubAgents) > 0 {
 		maxTurns = maxTurns * (1 + len(taskCfg.SubAgents))
 	}

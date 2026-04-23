@@ -740,7 +740,7 @@ function TaskRunEntry({ task, allTasks, onRetried }: { task: AgentTask; allTasks
 function AgentBadge({ name }: { name?: string }) {
   if (!name || name === "multica_agent") return null;
   return (
-    <span className="inline-flex items-center rounded px-1 py-0.5 text-[10px] font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 mr-1">
+    <span className="inline-flex items-center rounded px-1 py-0.5 text-[10px] font-medium bg-primary/10 text-primary mr-1">
       {name}
     </span>
   );
@@ -803,7 +803,7 @@ function SubAgentCollapsible({ name, content, children }: { name: string; conten
         )}
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="ml-4 border-l border-purple-200 dark:border-purple-800/40 pl-2">
+        <div className="ml-4 border-l border-primary/20 pl-2">
           {children}
         </div>
       </CollapsibleContent>
@@ -836,7 +836,7 @@ function renderTimelineItems(items: TimelineItem[]) {
 function DelegationRow({ item }: { item: TimelineItem }) {
   return (
     <div className="flex items-center gap-1.5 px-1 -mx-1 py-1 text-xs">
-      <ArrowRight className="h-3 w-3 shrink-0 text-purple-500" />
+      <ArrowRight className="h-3 w-3 shrink-0 text-primary" />
       <span className="text-muted-foreground">
         Delegated to{" "}
         <span className="font-medium text-foreground">{item.delegation_target}</span>

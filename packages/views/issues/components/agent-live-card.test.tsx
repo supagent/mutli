@@ -465,7 +465,14 @@ describe("Parent-child task display", () => {
     await expandHistory();
     await expandTaskEntry();
 
-    // Should show child task count
-    await waitFor(() => expect(screen.getByText(/2.*task/i)).toBeInTheDocument());
+    // Should show child task count in ChainOfThought header
+    await waitFor(() => expect(screen.getByTestId("chain-of-thought-header")).toBeInTheDocument());
+    expect(screen.getByTestId("chain-of-thought-header")).toHaveTextContent(/2.*complete/i);
+
+    // Should render individual child steps with correct status
+    const steps = screen.getAllByTestId("chain-of-thought-step");
+    expect(steps).toHaveLength(2);
+    expect(steps[0]).toHaveAttribute("data-status", "complete");
+    expect(steps[1]).toHaveAttribute("data-status", "complete");
   });
 });

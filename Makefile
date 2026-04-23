@@ -199,7 +199,7 @@ dev-full:
 	@trap 'kill 0' EXIT; \
 		(cd server && go run ./cmd/server) & \
 		pnpm dev:web & \
-		(sleep 3 && multica daemon start --foreground) & \
+		(until curl -s -o /dev/null http://localhost:$(PORT) 2>/dev/null; do sleep 1; done && multica daemon start --foreground) & \
 		wait
 
 ## Start ModelRelay (free LLM proxy for OpenHarness agent, localhost:7352)
