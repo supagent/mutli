@@ -27,7 +27,7 @@ export interface AgentTask {
   agent_id: string;
   runtime_id: string;
   issue_id: string;
-  status: "queued" | "dispatched" | "running" | "completed" | "failed" | "cancelled";
+  status: "queued" | "dispatched" | "running" | "waiting" | "completed" | "failed" | "cancelled";
   priority: number;
   dispatched_at: string | null;
   started_at: string | null;
@@ -35,7 +35,15 @@ export interface AgentTask {
   result: unknown;
   error: string | null;
   retried_from_id: string | null;
+  parent_task_id: string | null;
+  role: "orchestrator" | "worker" | "synthesizer" | null;
   created_at: string;
+}
+
+export interface SubAgentRef {
+  id: string;
+  name: string;
+  description: string;
 }
 
 export interface Agent {
@@ -53,6 +61,7 @@ export interface Agent {
   max_concurrent_tasks: number;
   owner_id: string | null;
   skills: Skill[];
+  sub_agents: SubAgentRef[];
   created_at: string;
   updated_at: string;
   archived_at: string | null;
@@ -124,6 +133,10 @@ export interface UpdateSkillRequest {
 
 export interface SetAgentSkillsRequest {
   skill_ids: string[];
+}
+
+export interface SetSubAgentsRequest {
+  sub_agent_ids: string[];
 }
 
 export type RuntimePingStatus = "pending" | "running" | "completed" | "failed" | "timeout";

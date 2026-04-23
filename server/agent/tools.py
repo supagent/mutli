@@ -175,6 +175,52 @@ def create_xlsx(filename: str, data_json: str) -> dict:
         return {"error": f"Failed to create xlsx: {e}"}
 
 
+# ── Orchestration tools ─────────────────────────────────────────────────────
+
+
+def create_child_task(agent_name: str, prompt: str) -> dict:
+    """Delegate a task to another agent. Creates a child task that runs
+    independently in its own sandbox. Use this for parallel execution or
+    when work should be done by a specialist agent.
+
+    The child task will be picked up by the target agent's runtime and
+    executed concurrently. Results are collected automatically.
+
+    Args:
+        agent_name: Name of the agent to delegate to (must exist in workspace).
+        prompt: Instructions for the child agent describing what to do.
+    """
+    # Write child task request to /workspace/output/ for the daemon to process
+    # after the sandbox exits. This avoids sandbox network restrictions.
+    output_dir = "/workspace/output"
+    requests_file = os.path.join(output_dir, "_child_task_requests.json")
+
+    try:
+        existing = []
+        if os.path.exists(requests_file):
+            try:
+                with open(requests_file) as f:
+                    existing = json.load(f)
+                if not isinstance(existing, list):
+                    existing = []
+            except (json.JSONDecodeError, IOError):
+                existing = []
+
+        existing.append({"agent_name": agent_name, "prompt": prompt})
+
+        os.makedirs(output_dir, exist_ok=True)
+        with open(requests_file, "w") as f:
+            json.dump(existing, f)
+
+        return {
+            "status": "queued",
+            "agent_name": agent_name,
+            "message": f"Child task for {agent_name} will be created when this task completes.",
+        }
+    except Exception as e:
+        return {"error": f"Failed to queue child task: {e}"}
+
+
 # ── Tool registry ────────────────────────────────────────────────────────────
 
 ALL_TOOLS = [
@@ -186,4 +232,5 @@ ALL_TOOLS = [
     create_document,
     create_docx,
     create_xlsx,
+    create_child_task,
 ]

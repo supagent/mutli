@@ -25,17 +25,18 @@ func normalizeLineEndings(s string) string {
 
 // ndEvent represents a single NDJSON event from the ADK agent bridge.
 type ndEvent struct {
-	Type    string                       `json:"type"`
-	Seq     int                          `json:"seq,omitempty"`
-	Tool    string                       `json:"tool,omitempty"`
-	Input   map[string]any               `json:"input,omitempty"`
-	Output  string                       `json:"output,omitempty"`
-	Content string                       `json:"content,omitempty"`
-	Status  string                       `json:"status,omitempty"`
-	Error   string                       `json:"error,omitempty"`
-	Usage   map[string]ndEventTokenUsage `json:"usage,omitempty"`
-	TaskID  string                       `json:"task_id,omitempty"`
-	IssueID string                       `json:"issue_id,omitempty"`
+	Type      string                       `json:"type"`
+	Seq       int                          `json:"seq,omitempty"`
+	Tool      string                       `json:"tool,omitempty"`
+	Input     map[string]any               `json:"input,omitempty"`
+	Output    string                       `json:"output,omitempty"`
+	Content   string                       `json:"content,omitempty"`
+	Status    string                       `json:"status,omitempty"`
+	Error     string                       `json:"error,omitempty"`
+	Usage     map[string]ndEventTokenUsage `json:"usage,omitempty"`
+	TaskID    string                       `json:"task_id,omitempty"`
+	IssueID   string                       `json:"issue_id,omitempty"`
+	AgentName string                       `json:"agent_name,omitempty"`
 }
 
 // ndEventTokenUsage maps the JSON token usage fields from the bridge.
@@ -69,34 +70,46 @@ func ParseNDJSONLine(raw string) (msg agent.Message, result *agent.Result, ok bo
 	switch ev.Type {
 	case "tool_use":
 		return agent.Message{
-			Type:  agent.MessageToolUse,
-			Tool:  ev.Tool,
-			Input: ev.Input,
+			Type:      agent.MessageToolUse,
+			Tool:      ev.Tool,
+			Input:     ev.Input,
+			AgentName: ev.AgentName,
 		}, nil, true
 
 	case "tool_result":
 		return agent.Message{
-			Type:   agent.MessageToolResult,
-			Tool:   ev.Tool,
-			Output: ev.Output,
+			Type:      agent.MessageToolResult,
+			Tool:      ev.Tool,
+			Output:    ev.Output,
+			AgentName: ev.AgentName,
 		}, nil, true
 
 	case "text":
 		return agent.Message{
-			Type:    agent.MessageText,
-			Content: ev.Content,
+			Type:      agent.MessageText,
+			Content:   ev.Content,
+			AgentName: ev.AgentName,
 		}, nil, true
 
 	case "thinking":
 		return agent.Message{
-			Type:    agent.MessageThinking,
-			Content: ev.Content,
+			Type:      agent.MessageThinking,
+			Content:   ev.Content,
+			AgentName: ev.AgentName,
 		}, nil, true
 
 	case "error":
 		return agent.Message{
-			Type:    agent.MessageError,
-			Content: ev.Content,
+			Type:      agent.MessageError,
+			Content:   ev.Content,
+			AgentName: ev.AgentName,
+		}, nil, true
+
+	case "setup":
+		return agent.Message{
+			Type:      agent.MessageSetup,
+			Content:   ev.Content,
+			AgentName: ev.AgentName,
 		}, nil, true
 
 	case "result":

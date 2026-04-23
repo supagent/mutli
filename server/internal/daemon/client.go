@@ -91,12 +91,13 @@ func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, ste
 
 // TaskMessageData represents a single agent execution message for batch reporting.
 type TaskMessageData struct {
-	Seq     int            `json:"seq"`
-	Type    string         `json:"type"`
-	Tool    string         `json:"tool,omitempty"`
-	Content string         `json:"content,omitempty"`
-	Input   map[string]any `json:"input,omitempty"`
-	Output  string         `json:"output,omitempty"`
+	Seq       int            `json:"seq"`
+	Type      string         `json:"type"`
+	Tool      string         `json:"tool,omitempty"`
+	Content   string         `json:"content,omitempty"`
+	Input     map[string]any `json:"input,omitempty"`
+	Output    string         `json:"output,omitempty"`
+	AgentName string         `json:"agent_name,omitempty"`
 }
 
 func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages []TaskMessageData) error {
@@ -375,4 +376,68 @@ func (c *Client) getJSONWithHeaders(ctx context.Context, path string, respBody a
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(respBody)
+}
+
+// ── Parent-child task orchestration ─────────────────────────────────────────
+
+// HasChildTasks checks if a task has any child tasks.
+func (c *Client) HasChildTasks(ctx context.Context, taskID string) (bool, error) {
+	var children []json.RawMessage
+	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/children", taskID), &children); err != nil {
+		return false, err
+	}
+	return len(children) > 0, nil
+}
+
+// CreateChildTask creates a child task under a parent task.
+func (c *Client) CreateChildTask(ctx context.Context, parentTaskID, agentName, prompt string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/children", parentTaskID), map[string]any{
+		"agent_name": agentName,
+		"prompt":     prompt,
+	}, nil)
+}
+
+// SetTaskWaiting transitions a task to waiting state.
+func (c *Client) SetTaskWaiting(ctx context.Context, taskID string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/waiting", taskID), nil, nil)
+}
+
+// ChildResult holds the result of a child task for synthesis.
+type ChildResult struct {
+	AgentName string `json:"agent_name"`
+	Status    string `json:"status"`
+	Output    string `json:"output"`
+	Error     string `json:"error"`
+}
+
+// GetChildResults fetches child task results for synthesis.
+func (c *Client) GetChildResults(ctx context.Context, taskID string) ([]ChildResult, error) {
+	var tasks []struct {
+		Status string          `json:"status"`
+		Result json.RawMessage `json:"result"`
+		Error  *string         `json:"error"`
+		Agent  *struct {
+			Name string `json:"name"`
+		} `json:"agent,omitempty"`
+	}
+	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/children", taskID), &tasks); err != nil {
+		return nil, err
+	}
+	results := make([]ChildResult, len(tasks))
+	for i, t := range tasks {
+		r := ChildResult{Status: t.Status}
+		if t.Agent != nil {
+			r.AgentName = t.Agent.Name
+		}
+		if t.Error != nil {
+			r.Error = *t.Error
+		}
+		if t.Result != nil {
+			var payload struct{ Output string `json:"output"` }
+			json.Unmarshal(t.Result, &payload)
+			r.Output = payload.Output
+		}
+		results[i] = r
+	}
+	return results, nil
 }

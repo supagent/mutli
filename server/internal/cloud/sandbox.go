@@ -2,6 +2,7 @@ package cloud
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"mime"
@@ -83,6 +84,8 @@ func (sm *SandboxManager) Execute(ctx context.Context, cfg agent.SandboxTaskConf
 		MaxTurns:     cfg.MaxTurns,
 		SystemPrompt: cfg.SystemPrompt,
 		Timeout:      cfg.Timeout,
+		SubAgents:    cfg.SubAgents,
+		Role:         cfg.Role,
 	}
 	return sm.execute(ctx, taskCfg)
 }
@@ -118,7 +121,7 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 	// Create message channel early so we can send lifecycle status updates.
 	msgCh := make(chan agent.Message, 256)
 
-	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Creating sandbox environment..."})
+	trySendCloud(msgCh, agent.Message{Type: agent.MessageSetup, Content: "Creating sandbox"})
 
 	// Build sandbox image: Python + ADK deps from pinned requirements.txt.
 	// Image is cached by Daytona after first build — sub-second subsequent creates.
@@ -145,11 +148,14 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 	if taskCfg.WorkspaceID != "" {
 		envVars["MULTICA_WORKSPACE_ID"] = taskCfg.WorkspaceID
 	}
+	if taskCfg.TaskID != "" {
+		envVars["MULTICA_TASK_ID"] = taskCfg.TaskID
+	}
 
 	sandbox, err := sm.client.Create(runCtx, types.ImageParams{
 		SandboxBaseParams: types.SandboxBaseParams{
 			EnvVars:         envVars,
-			NetworkBlockAll: false, // Allow outbound for Gemini API + Multica API
+			NetworkBlockAll: false,
 		},
 		Image: image,
 	}, options.WithTimeout(imageTimeout))
@@ -158,7 +164,7 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		return nil, fmt.Errorf("create sandbox: %w", err)
 	}
 	sm.logger.Info("sandbox created", "task", taskCfg.TaskID, "sandbox", sandbox.ID)
-	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Sandbox ready. Uploading agent..."})
+	trySendCloud(msgCh, agent.Message{Type: agent.MessageSetup, Content: "Uploading agent"})
 
 	// Upload ADK agent Python files (embedded at compile time).
 	sandbox.Process.ExecuteCommand(runCtx, "mkdir -p /workspace/agent /workspace/output")
@@ -179,6 +185,22 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		}
 	}
 
+	// Upload sub-agent definitions for multi-agent orchestration.
+	if len(taskCfg.SubAgents) > 0 {
+		subAgentJSON, err := json.Marshal(taskCfg.SubAgents)
+		if err != nil {
+			cleanupSandbox(sandbox, sm.logger)
+			cancel()
+			return nil, fmt.Errorf("marshal sub-agents: %w", err)
+		}
+		if err := sandbox.FileSystem.UploadFile(runCtx, subAgentJSON, "/workspace/agent/sub_agents.json"); err != nil {
+			cleanupSandbox(sandbox, sm.logger)
+			cancel()
+			return nil, fmt.Errorf("upload sub_agents.json: %w", err)
+		}
+		sm.logger.Info("uploaded sub-agent definitions", "task", taskCfg.TaskID, "count", len(taskCfg.SubAgents))
+	}
+
 	// Create PTY session for streaming output
 	sessionID := fmt.Sprintf("task-%s", taskCfg.TaskID)
 	handle, err := sandbox.Process.CreatePty(runCtx, sessionID)
@@ -193,16 +215,39 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 		return nil, fmt.Errorf("pty connect: %w", err)
 	}
 
+	// Scale maxTurns for orchestrators: the total sandbox turn budget must
+	// accommodate the orchestrator + all sub-agents. Each sub-agent has its
+	// own independent turn limiter (before_model_callback) so the per-agent
+	// cap stays at baseTurns — this only affects the global sandbox ceiling.
+	if len(taskCfg.SubAgents) > 0 {
+		maxTurns = maxTurns * (1 + len(taskCfg.SubAgents))
+	}
+
 	// Build the agent command
-	cmd := fmt.Sprintf("cd /workspace/agent && python3 multica_agent.py --task-id %s --issue-id %s --prompt %s --model %s --max-turns %d\nexit\n",
+	subAgentsArg := ""
+	if len(taskCfg.SubAgents) > 0 {
+		subAgentsArg = " --sub-agents /workspace/agent/sub_agents.json"
+	}
+	systemPromptArg := ""
+	if taskCfg.SystemPrompt != "" {
+		systemPromptArg = " --system-prompt " + shellQuote(taskCfg.SystemPrompt)
+	}
+	roleArg := ""
+	if taskCfg.Role != "" {
+		roleArg = " --role " + shellQuote(taskCfg.Role)
+	}
+	cmd := fmt.Sprintf("cd /workspace/agent && python3 multica_agent.py --task-id %s --issue-id %s --prompt %s --model %s --max-turns %d%s%s%s\nexit\n",
 		shellQuote(taskCfg.TaskID),
 		shellQuote(taskCfg.IssueID),
 		shellQuote(taskCfg.Prompt),
 		shellQuote(model),
 		maxTurns,
+		subAgentsArg,
+		systemPromptArg,
+		roleArg,
 	)
 
-	trySendCloud(msgCh, agent.Message{Type: agent.MessageText, Content: "Starting agent..."})
+	trySendCloud(msgCh, agent.Message{Type: agent.MessageSetup, Content: "Starting agent"})
 	sm.logger.Info("running ADK agent in sandbox", "task", taskCfg.TaskID, "model", model)
 
 	// Execute via PTY for streaming output

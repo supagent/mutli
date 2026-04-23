@@ -18,6 +18,14 @@ type SandboxExecutor interface {
 	Execute(ctx context.Context, cfg SandboxTaskConfig) (*Session, error)
 }
 
+// SubAgentDef defines a sub-agent for multi-agent orchestration.
+// Serialized to JSON and uploaded to the sandbox for ADK construction.
+type SubAgentDef struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Instructions string `json:"instructions"`
+}
+
 // SandboxTaskConfig is the task config passed to the sandbox executor.
 type SandboxTaskConfig struct {
 	TaskID       string
@@ -28,6 +36,8 @@ type SandboxTaskConfig struct {
 	MaxTurns     int
 	SystemPrompt string
 	Timeout      time.Duration
+	SubAgents    []SubAgentDef
+	Role         string
 }
 
 func (b *EmbeddedBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
@@ -47,5 +57,7 @@ func (b *EmbeddedBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		MaxTurns:     opts.MaxTurns,
 		SystemPrompt: opts.SystemPrompt,
 		Timeout:      opts.Timeout,
+		SubAgents:    opts.SubAgents,
+		Role:         opts.Role,
 	})
 }

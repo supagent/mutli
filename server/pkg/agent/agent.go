@@ -25,10 +25,12 @@ type ExecOptions struct {
 	SystemPrompt    string
 	MaxTurns        int
 	Timeout         time.Duration
-	ResumeSessionID string // if non-empty, resume a previous agent session
-	TaskID          string // task ID (for embedded agent)
-	IssueID         string // issue ID (for embedded agent)
-	WorkspaceID     string // workspace ID (for embedded agent API calls)
+	ResumeSessionID string        // if non-empty, resume a previous agent session
+	TaskID          string        // task ID (for embedded agent)
+	IssueID         string        // issue ID (for embedded agent)
+	WorkspaceID     string        // workspace ID (for embedded agent API calls)
+	SubAgents       []SubAgentDef // sub-agent definitions for multi-agent orchestration
+	Role            string        // task role: orchestrator, worker, synthesizer
 }
 
 // Session represents a running agent execution.
@@ -49,20 +51,22 @@ const (
 	MessageToolUse    MessageType = "tool-use"
 	MessageToolResult MessageType = "tool-result"
 	MessageStatus     MessageType = "status"
+	MessageSetup      MessageType = "setup"
 	MessageError      MessageType = "error"
 	MessageLog        MessageType = "log"
 )
 
 // Message is a unified event emitted by an agent during execution.
 type Message struct {
-	Type    MessageType
-	Content string         // text content (Text, Error, Log)
-	Tool    string         // tool name (ToolUse, ToolResult)
-	CallID  string         // tool call ID (ToolUse, ToolResult)
-	Input   map[string]any // tool input (ToolUse)
-	Output  string         // tool output (ToolResult)
-	Status  string         // agent status string (Status)
-	Level   string         // log level (Log)
+	Type      MessageType
+	Content   string         // text content (Text, Error, Log)
+	Tool      string         // tool name (ToolUse, ToolResult)
+	CallID    string         // tool call ID (ToolUse, ToolResult)
+	Input     map[string]any // tool input (ToolUse)
+	Output    string         // tool output (ToolResult)
+	Status    string         // agent status string (Status)
+	Level     string         // log level (Log)
+	AgentName string         // sub-agent attribution (multi-agent orchestration)
 }
 
 // TokenUsage tracks token consumption for a single model.

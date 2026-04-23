@@ -365,12 +365,24 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	resp := taskToResponse(*task)
 	if agent, err := h.Queries.GetAgent(r.Context(), task.AgentID); err == nil {
 		skills := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
-		resp.Agent = &TaskAgentData{
+		agentData := &TaskAgentData{
 			ID:           uuidToString(agent.ID),
 			Name:         agent.Name,
 			Instructions: agent.Instructions,
 			Skills:       skills,
 		}
+		// Load sub-agents so the daemon can upload definitions to the sandbox.
+		if subs, err := h.Queries.ListSubAgents(r.Context(), agent.ID); err == nil && len(subs) > 0 {
+			agentData.SubAgents = make([]SubAgentDef, len(subs))
+			for i, sa := range subs {
+				agentData.SubAgents[i] = SubAgentDef{
+					Name:         sa.Name,
+					Description:  sa.Description,
+					Instructions: sa.Instructions,
+				}
+			}
+		}
+		resp.Agent = agentData
 	}
 
 	// Include workspace ID and repos so the daemon can set up worktrees.
@@ -758,12 +770,13 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type TaskMessageRequest struct {
-	Seq     int            `json:"seq"`
-	Type    string         `json:"type"`
-	Tool    string         `json:"tool,omitempty"`
-	Content string         `json:"content,omitempty"`
-	Input   map[string]any `json:"input,omitempty"`
-	Output  string         `json:"output,omitempty"`
+	Seq       int            `json:"seq"`
+	Type      string         `json:"type"`
+	Tool      string         `json:"tool,omitempty"`
+	Content   string         `json:"content,omitempty"`
+	Input     map[string]any `json:"input,omitempty"`
+	Output    string         `json:"output,omitempty"`
+	AgentName string         `json:"agent_name,omitempty"`
 }
 
 type TaskMessageBatchRequest struct {
@@ -813,25 +826,27 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			inputJSON, _ = json.Marshal(msg.Input)
 		}
 		h.Queries.CreateTaskMessage(r.Context(), db.CreateTaskMessageParams{
-			TaskID:  parseUUID(taskID),
-			Seq:     int32(msg.Seq),
-			Type:    msg.Type,
-			Tool:    pgtype.Text{String: msg.Tool, Valid: msg.Tool != ""},
-			Content: pgtype.Text{String: msg.Content, Valid: msg.Content != ""},
-			Input:   inputJSON,
-			Output:  pgtype.Text{String: msg.Output, Valid: msg.Output != ""},
+			TaskID:    parseUUID(taskID),
+			Seq:       int32(msg.Seq),
+			Type:      msg.Type,
+			Tool:      pgtype.Text{String: msg.Tool, Valid: msg.Tool != ""},
+			Content:   pgtype.Text{String: msg.Content, Valid: msg.Content != ""},
+			Input:     inputJSON,
+			Output:    pgtype.Text{String: msg.Output, Valid: msg.Output != ""},
+			AgentName: pgtype.Text{String: msg.AgentName, Valid: msg.AgentName != ""},
 		})
 
 		if workspaceID != "" {
 			h.publish(protocol.EventTaskMessage, workspaceID, "system", "", protocol.TaskMessagePayload{
-				TaskID:  taskID,
-				IssueID: uuidToString(task.IssueID),
-				Seq:     msg.Seq,
-				Type:    msg.Type,
-				Tool:    msg.Tool,
-				Content: msg.Content,
-				Input:   msg.Input,
-				Output:  msg.Output,
+				TaskID:    taskID,
+				IssueID:   uuidToString(task.IssueID),
+				Seq:       msg.Seq,
+				Type:      msg.Type,
+				Tool:      msg.Tool,
+				Content:   msg.Content,
+				Input:     msg.Input,
+				Output:    msg.Output,
+				AgentName: msg.AgentName,
 			})
 		}
 	}
@@ -880,14 +895,15 @@ func (h *Handler) ListTaskMessages(w http.ResponseWriter, r *http.Request) {
 			json.Unmarshal(m.Input, &input)
 		}
 		resp[i] = protocol.TaskMessagePayload{
-			TaskID:  taskID,
-			IssueID: issueID,
-			Seq:     int(m.Seq),
-			Type:    m.Type,
-			Tool:    m.Tool.String,
-			Content: m.Content.String,
-			Input:   input,
-			Output:  m.Output.String,
+			TaskID:    taskID,
+			IssueID:   issueID,
+			Seq:       int(m.Seq),
+			Type:      m.Type,
+			Tool:      m.Tool.String,
+			Content:   m.Content.String,
+			Input:     input,
+			Output:    m.Output.String,
+			AgentName: m.AgentName.String,
 		}
 	}
 
@@ -995,14 +1011,15 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 			json.Unmarshal(m.Input, &input)
 		}
 		resp[i] = protocol.TaskMessagePayload{
-			TaskID:  taskID,
-			IssueID: issueID,
-			Seq:     int(m.Seq),
-			Type:    m.Type,
-			Tool:    m.Tool.String,
-			Content: m.Content.String,
-			Input:   input,
-			Output:  m.Output.String,
+			TaskID:    taskID,
+			IssueID:   issueID,
+			Seq:       int(m.Seq),
+			Type:      m.Type,
+			Tool:      m.Tool.String,
+			Content:   m.Content.String,
+			Input:     input,
+			Output:    m.Output.String,
+			AgentName: m.AgentName.String,
 		}
 	}
 
@@ -1040,4 +1057,129 @@ func (h *Handler) GetIssueGCCheck(w http.ResponseWriter, r *http.Request) {
 		"status":     issue.Status,
 		"updated_at": issue.UpdatedAt.Time,
 	})
+}
+
+// ── Parent-child task orchestration ─────────────────────────────────────────
+
+type CreateChildTaskRequest struct {
+	AgentName string `json:"agent_name"`
+	Prompt    string `json:"prompt"`
+}
+
+// CreateChildTask creates a child task under a parent task.
+// Called by the agent tool from inside the sandbox.
+func (h *Handler) CreateChildTask(w http.ResponseWriter, r *http.Request) {
+	parentTaskID := chi.URLParam(r, "taskId")
+
+	var req CreateChildTaskRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.AgentName == "" {
+		writeError(w, http.StatusBadRequest, "agent_name is required")
+		return
+	}
+
+	// Verify the daemon owns the parent task's workspace.
+	parent, ok := h.requireDaemonTaskAccess(w, r, parentTaskID)
+	if !ok {
+		return
+	}
+
+	// Resolve agent by name within the workspace.
+	var workspaceID pgtype.UUID
+	if parent.IssueID.Valid {
+		if issue, err := h.Queries.GetIssue(r.Context(), parent.IssueID); err == nil {
+			workspaceID = issue.WorkspaceID
+		}
+	}
+
+	agents, err := h.Queries.ListAgents(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list agents")
+		return
+	}
+	var targetAgent *db.Agent
+	for _, a := range agents {
+		if a.Name == req.AgentName {
+			targetAgent = &a
+			break
+		}
+	}
+	if targetAgent == nil {
+		writeError(w, http.StatusNotFound, "agent not found: "+req.AgentName)
+		return
+	}
+
+	child, err := h.TaskService.CreateChildTask(r.Context(), parseUUID(parentTaskID), targetAgent.ID, parent.IssueID, parent.Priority)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create child task: "+err.Error())
+		return
+	}
+
+	// Store the prompt in the child task's context so the daemon can use it.
+	if req.Prompt != "" {
+		contextJSON, _ := json.Marshal(map[string]string{"prompt": req.Prompt})
+		h.Queries.UpdateTaskContext(r.Context(), db.UpdateTaskContextParams{
+			ID:      child.ID,
+			Context: contextJSON,
+		})
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"task_id":    uuidToString(child.ID),
+		"agent_name": req.AgentName,
+		"status":     child.Status,
+	})
+}
+
+// ListChildTasks returns all child tasks for a parent (daemon auth).
+func (h *Handler) ListChildTasks(w http.ResponseWriter, r *http.Request) {
+	parentTaskID := chi.URLParam(r, "taskId")
+	if _, ok := h.requireDaemonTaskAccess(w, r, parentTaskID); !ok {
+		return
+	}
+	children, err := h.Queries.ListChildTasks(r.Context(), parseUUID(parentTaskID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list child tasks")
+		return
+	}
+	resp := make([]AgentTaskResponse, len(children))
+	for i, t := range children {
+		resp[i] = taskToResponse(t)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ListChildTasksByUser returns child tasks (user auth, workspace-scoped).
+func (h *Handler) ListChildTasksByUser(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "taskId")
+	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
+	if !ok {
+		return
+	}
+	children, err := h.Queries.ListChildTasks(r.Context(), task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list child tasks")
+		return
+	}
+	resp := make([]AgentTaskResponse, len(children))
+	for i, t := range children {
+		resp[i] = taskToResponse(t)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// SetTaskWaiting transitions a running task to waiting state.
+func (h *Handler) SetTaskWaiting(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "taskId")
+	if _, ok := h.requireDaemonTaskAccess(w, r, taskID); !ok {
+		return
+	}
+	if err := h.TaskService.TransitionToWaiting(r.Context(), parseUUID(taskID)); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "waiting"})
 }

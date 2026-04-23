@@ -29,11 +29,13 @@ import { redactSecrets } from "../utils/redact";
 
 interface TimelineItem {
   seq: number;
-  type: "tool_use" | "tool_result" | "thinking" | "text" | "error";
+  type: "tool_use" | "tool_result" | "thinking" | "text" | "error" | "delegation" | "setup";
   tool?: string;
   content?: string;
   input?: Record<string, unknown>;
   output?: string;
+  agent_name?: string;
+  delegation_target?: string;
 }
 
 interface AgentTranscriptDialogProps {
@@ -47,7 +49,7 @@ interface AgentTranscriptDialogProps {
 
 // ─── Color mapping for timeline segments ────────────────────────────────────
 
-type EventColor = "agent" | "thinking" | "tool" | "result" | "error";
+type EventColor = "agent" | "thinking" | "tool" | "result" | "error" | "delegation" | "setup";
 
 function getEventColor(item: TimelineItem): EventColor {
   switch (item.type) {
@@ -61,6 +63,10 @@ function getEventColor(item: TimelineItem): EventColor {
       return "result";
     case "error":
       return "error";
+    case "delegation":
+      return "delegation";
+    case "setup":
+      return "setup";
     default:
       return "result";
   }
@@ -72,6 +78,8 @@ const colorClasses: Record<EventColor, { bg: string; bgActive: string; label: st
   tool: { bg: "bg-blue-400/60", bgActive: "bg-blue-500", label: "bg-blue-500/20 text-blue-700 dark:text-blue-300" },
   result: { bg: "bg-slate-300/60 dark:bg-slate-600/60", bgActive: "bg-slate-400 dark:bg-slate-500", label: "bg-muted text-muted-foreground" },
   error: { bg: "bg-red-400/60", bgActive: "bg-red-500", label: "bg-red-500/20 text-red-700 dark:text-red-300" },
+  delegation: { bg: "bg-purple-400/60", bgActive: "bg-purple-500", label: "bg-purple-500/20 text-purple-700 dark:text-purple-300" },
+  setup: { bg: "bg-slate-300/40 dark:bg-slate-600/40", bgActive: "bg-slate-300 dark:bg-slate-600", label: "bg-muted text-muted-foreground/60" },
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -88,6 +96,10 @@ function getEventLabel(item: TimelineItem): string {
       return item.tool ? `${item.tool}` : "Result";
     case "error":
       return "Error";
+    case "delegation":
+      return "Delegation";
+    case "setup":
+      return "Setup";
     default:
       return "Event";
   }
@@ -124,6 +136,10 @@ function getEventSummary(item: TimelineItem): string {
     case "tool_result":
       return item.output?.slice(0, 200) ?? "";
     case "error":
+      return item.content ?? "";
+    case "delegation":
+      return `Delegated to ${item.delegation_target ?? "agent"}`;
+    case "setup":
       return item.content ?? "";
     default:
       return "";

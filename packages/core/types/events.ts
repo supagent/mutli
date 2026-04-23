@@ -171,11 +171,12 @@ export interface TaskMessagePayload {
   task_id: string;
   issue_id: string;
   seq: number;
-  type: "text" | "thinking" | "tool_use" | "tool_result" | "error";
+  type: "text" | "thinking" | "tool_use" | "tool_result" | "error" | "setup";
   tool?: string;
   content?: string;
   input?: Record<string, unknown>;
   output?: string;
+  agent_name?: string;
 }
 
 export interface TaskCompletedPayload {

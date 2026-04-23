@@ -13,6 +13,13 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// SubAgentRef is a lightweight reference to a sub-agent in API responses.
+type SubAgentRef struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 type AgentResponse struct {
 	ID                 string          `json:"id"`
 	WorkspaceID        string          `json:"workspace_id"`
@@ -28,6 +35,7 @@ type AgentResponse struct {
 	MaxConcurrentTasks int32           `json:"max_concurrent_tasks"`
 	OwnerID            *string         `json:"owner_id"`
 	Skills             []SkillResponse `json:"skills"`
+	SubAgents          []SubAgentRef   `json:"sub_agents"`
 	CreatedAt          string          `json:"created_at"`
 	UpdatedAt          string          `json:"updated_at"`
 	ArchivedAt         *string         `json:"archived_at"`
@@ -58,6 +66,7 @@ func agentToResponse(a db.Agent) AgentResponse {
 		MaxConcurrentTasks: a.MaxConcurrentTasks,
 		OwnerID:            uuidToPtr(a.OwnerID),
 		Skills:             []SkillResponse{},
+		SubAgents:          []SubAgentRef{},
 		CreatedAt:          timestampToString(a.CreatedAt),
 		UpdatedAt:          timestampToString(a.UpdatedAt),
 		ArchivedAt:         timestampToPtr(a.ArchivedAt),
@@ -93,8 +102,17 @@ type AgentTaskResponse struct {
 	RetriedFromID         *string        `json:"retried_from_id"`                   // original task that was retried
 	TriggerCommentID      *string        `json:"trigger_comment_id,omitempty"`      // comment that triggered this task
 	TriggerCommentContent string         `json:"trigger_comment_content,omitempty"` // content of the triggering comment
-	ChatSessionID         string         `json:"chat_session_id,omitempty"`         // non-empty for chat tasks
-	ChatMessage           string         `json:"chat_message,omitempty"`            // user message for chat tasks
+	ChatSessionID         string         `json:"chat_session_id,omitempty"`
+	ChatMessage           string         `json:"chat_message,omitempty"`
+	ParentTaskID          *string        `json:"parent_task_id,omitempty"`
+	Role                  *string        `json:"role,omitempty"`
+}
+
+// SubAgentDef is used in claim responses — includes instructions for sandbox execution.
+type SubAgentDef struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Instructions string `json:"instructions"`
 }
 
 // TaskAgentData holds agent info included in claim responses so the daemon
@@ -104,6 +122,7 @@ type TaskAgentData struct {
 	Name         string                   `json:"name"`
 	Instructions string                   `json:"instructions"`
 	Skills       []service.AgentSkillData `json:"skills,omitempty"`
+	SubAgents    []SubAgentDef            `json:"sub_agents,omitempty"`
 }
 
 func taskToResponse(t db.AgentTaskQueue) AgentTaskResponse {
@@ -126,6 +145,8 @@ func taskToResponse(t db.AgentTaskQueue) AgentTaskResponse {
 		CreatedAt:        timestampToString(t.CreatedAt),
 		RetriedFromID:    uuidToPtr(t.RetriedFromID),
 		TriggerCommentID: uuidToPtr(t.TriggerCommentID),
+		ParentTaskID:     uuidToPtr(t.ParentTaskID),
+		Role:             textToPtr(t.Role),
 	}
 }
 
@@ -163,12 +184,31 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Batch-load sub-agents for all agents to avoid N+1.
+	subAgentRows, err := h.Queries.ListSubAgentsByWorkspace(r.Context(), parseUUID(workspaceID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load sub-agents")
+		return
+	}
+	subAgentMap := map[string][]SubAgentRef{}
+	for _, row := range subAgentRows {
+		agentID := uuidToString(row.AgentID)
+		subAgentMap[agentID] = append(subAgentMap[agentID], SubAgentRef{
+			ID:          uuidToString(row.SubAgentID),
+			Name:        row.Name,
+			Description: row.Description,
+		})
+	}
+
 	// All agents (including private) are visible to workspace members.
 	visible := make([]AgentResponse, 0, len(agents))
 	for _, a := range agents {
 		resp := agentToResponse(a)
 		if skills, ok := skillMap[resp.ID]; ok {
 			resp.Skills = skills
+		}
+		if subs, ok := subAgentMap[resp.ID]; ok {
+			resp.SubAgents = subs
 		}
 		visible = append(visible, resp)
 	}
@@ -192,6 +232,21 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 		resp.Skills = make([]SkillResponse, len(skills))
 		for i, s := range skills {
 			resp.Skills[i] = skillToResponse(s)
+		}
+	}
+	subAgents, err := h.Queries.ListSubAgents(r.Context(), agent.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load sub-agents")
+		return
+	}
+	if len(subAgents) > 0 {
+		resp.SubAgents = make([]SubAgentRef, len(subAgents))
+		for i, sa := range subAgents {
+			resp.SubAgents[i] = SubAgentRef{
+				ID:          uuidToString(sa.ID),
+				Name:        sa.Name,
+				Description: sa.Description,
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -471,5 +526,110 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		resp[i] = taskToResponse(t)
 	}
 
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ── Sub-Agents ──────────────────────────────────────────────────────────────
+
+func (h *Handler) ListSubAgents(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	a, ok := h.loadAgentForUser(w, r, id)
+	if !ok {
+		return
+	}
+
+	rows, err := h.Queries.ListSubAgents(r.Context(), a.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list sub-agents")
+		return
+	}
+
+	resp := make([]SubAgentRef, len(rows))
+	for i, sa := range rows {
+		resp[i] = SubAgentRef{
+			ID:          uuidToString(sa.ID),
+			Name:        sa.Name,
+			Description: sa.Description,
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type SetSubAgentsRequest struct {
+	SubAgentIDs []string `json:"sub_agent_ids"`
+}
+
+func (h *Handler) SetSubAgents(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	a, ok := h.loadAgentForUser(w, r, id)
+	if !ok {
+		return
+	}
+	if !h.canManageAgent(w, r, a) {
+		return
+	}
+
+	var req SetSubAgentsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	qtx := h.Queries.WithTx(tx)
+
+	if err := qtx.RemoveAllSubAgents(r.Context(), a.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clear sub-agents")
+		return
+	}
+
+	for i, subID := range req.SubAgentIDs {
+		// Workspace-scoped lookup — ensures the sub-agent belongs to the same workspace.
+		_, err := qtx.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+			ID:          parseUUID(subID),
+			WorkspaceID: a.WorkspaceID,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "sub-agent not found in this workspace: "+subID)
+			return
+		}
+		if err := qtx.AddSubAgent(r.Context(), db.AddSubAgentParams{
+			AgentID:    a.ID,
+			SubAgentID: parseUUID(subID),
+			Position:   int32(i),
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to add sub-agent: "+err.Error())
+			return
+		}
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit")
+		return
+	}
+
+	// Return the updated sub-agents list.
+	rows, err := h.Queries.ListSubAgents(r.Context(), a.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list sub-agents")
+		return
+	}
+
+	resp := make([]SubAgentRef, len(rows))
+	for i, sa := range rows {
+		resp[i] = SubAgentRef{
+			ID:          uuidToString(sa.ID),
+			Name:        sa.Name,
+			Description: sa.Description,
+		}
+	}
+	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(a.WorkspaceID))
+	h.publish(protocol.EventAgentStatus, uuidToString(a.WorkspaceID), actorType, actorID, map[string]any{"agent_id": uuidToString(a.ID), "sub_agents": resp})
 	writeJSON(w, http.StatusOK, resp)
 }

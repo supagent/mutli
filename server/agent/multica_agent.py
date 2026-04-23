@@ -92,7 +92,31 @@ def make_turn_limiter(max_turns: int):
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-async def run(task_id: str, issue_id: str, prompt: str, model: str, max_turns: int):
+def _load_sub_agents(path: str, model: str, max_turns: int, tools: list | None = None) -> list:
+    """Load sub-agent definitions from JSON and construct ADK Agent objects."""
+    if not path or not os.path.exists(path):
+        return []
+
+    with open(path) as f:
+        defs = json.load(f)
+
+    agent_tools = tools if tools is not None else ALL_TOOLS
+    sub_agents = []
+    for sa_def in defs:
+        sub_agents.append(Agent(
+            name=sa_def["name"],
+            model=model,
+            instruction=sa_def.get("instructions", ""),
+            description=sa_def.get("description", ""),
+            tools=agent_tools,
+            before_model_callback=make_turn_limiter(max_turns),
+        ))
+        print(f"[agent] loaded sub-agent: {sa_def['name']}", file=sys.stderr)
+
+    return sub_agents
+
+
+async def run(task_id: str, issue_id: str, prompt: str, model: str, max_turns: int, sub_agents_path: str = "", system_prompt_extra: str = "", task_role: str = ""):
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_AI_API_KEY")
     if not api_key:
         emitter = NDJSONEmitter(task_id=task_id, issue_id=issue_id, model=model)
@@ -103,15 +127,43 @@ async def run(task_id: str, issue_id: str, prompt: str, model: str, max_turns: i
 
     emitter = NDJSONEmitter(task_id=task_id, issue_id=issue_id, model=model)
 
-    # NOTE: google_search (ADK built-in grounding) cannot be combined with
-    # function calling tools in Gemini 2.5. It will be added as a separate
-    # research sub-agent in Phase 4 (multi-agent).
+    # Compute tool restrictions based on task role.
+    from tools import create_child_task as _cct, add_comment as _ac, update_issue as _ui
+    agent_tools = list(ALL_TOOLS)
+
+    # Workers must not post comments or change issue status — their output
+    # flows to the orchestrator via synthesis. Enforced at the tool level
+    # because prompt-level instructions are unreliable.
+    if task_role == "worker":
+        agent_tools = [t for t in agent_tools if t not in (_ac, _ui, _cct)]
+
+    # Load sub-agent definitions for multi-agent orchestration.
+    # Sub-agents receive the same filtered tools as the parent.
+    has_sub_agents = bool(sub_agents_path and os.path.exists(sub_agents_path))
+    if has_sub_agents:
+        # Phase 1 (sub_agents) and Phase 2 (create_child_task) are mutually exclusive.
+        agent_tools = [t for t in agent_tools if t is not _cct]
+
+    try:
+        sub_agents = _load_sub_agents(sub_agents_path, model, max_turns, tools=agent_tools)
+    except Exception as e:
+        print(f"[agent] failed to load sub-agents: {e}", file=sys.stderr)
+        emitter.emit_error(f"Failed to load sub-agents: {e}")
+        sub_agents = []
+
+
+    # Combine base system prompt with agent-specific instructions from the DB.
+    instruction = SYSTEM_PROMPT
+    if system_prompt_extra:
+        instruction += f"\n\n## Agent-Specific Instructions\n{system_prompt_extra}\n"
+
     agent = Agent(
         name="multica_agent",
         model=model,
-        instruction=SYSTEM_PROMPT,
-        tools=ALL_TOOLS,
+        instruction=instruction,
+        tools=agent_tools,
         before_model_callback=make_turn_limiter(max_turns),
+        **({"sub_agents": sub_agents} if sub_agents else {}),
     )
 
     session_service = InMemorySessionService()
@@ -131,17 +183,20 @@ async def run(task_id: str, issue_id: str, prompt: str, model: str, max_turns: i
             session_id=session.id,
             new_message=user_message,
         ):
+            # Extract sub-agent attribution for multi-agent orchestration.
+            agent_name = getattr(event, "author", "") or ""
+
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if part.function_call:
                         args = dict(part.function_call.args) if part.function_call.args else {}
-                        emitter.emit_tool_use(part.function_call.name, args)
+                        emitter.emit_tool_use(part.function_call.name, args, agent_name=agent_name)
                     elif part.function_response:
                         output = json.dumps(dict(part.function_response.response)) if part.function_response.response else ""
-                        emitter.emit_tool_result(part.function_response.name, output)
+                        emitter.emit_tool_result(part.function_response.name, output, agent_name=agent_name)
                     elif part.text:
                         accumulated_text += part.text
-                        emitter.emit_text(part.text)
+                        emitter.emit_text(part.text, agent_name=agent_name)
 
             if hasattr(event, "usage_metadata") and event.usage_metadata:
                 emitter.record_usage(event.usage_metadata)
@@ -163,15 +218,21 @@ def main():
     parser.add_argument("--prompt", required=True, help="Agent prompt")
     parser.add_argument("--model", default="", help="Model override")
     parser.add_argument("--max-turns", type=int, default=0, help="Max LLM calls")
+    parser.add_argument("--sub-agents", default="", help="Path to sub-agents JSON file")
+    parser.add_argument("--system-prompt", default="", help="Additional agent instructions from DB")
+    parser.add_argument("--role", default="", help="Task role: orchestrator, worker, synthesizer")
     args = parser.parse_args()
 
     model = args.model or os.environ.get("MULTICA_MODEL", "gemini-2.5-flash")
     max_turns = args.max_turns if args.max_turns > 0 else int(os.environ.get("MULTICA_MAX_TURNS", "20"))
 
-    print(f"[agent] task={args.task_id} model={model} max_turns={max_turns}", file=sys.stderr)
+    sub_agents_path = args.sub_agents
+    system_prompt_extra = args.system_prompt
+    task_role = args.role
+    print(f"[agent] task={args.task_id} model={model} max_turns={max_turns} sub_agents={sub_agents_path or 'none'} role={task_role or 'none'}", file=sys.stderr)
 
     start = time.time()
-    exit_code = asyncio.run(run(args.task_id, args.issue_id, args.prompt, model, max_turns))
+    exit_code = asyncio.run(run(args.task_id, args.issue_id, args.prompt, model, max_turns, sub_agents_path, system_prompt_extra, task_role))
     elapsed = round(time.time() - start, 2)
 
     print(f"[agent] done in {elapsed}s exit_code={exit_code}", file=sys.stderr)

@@ -142,6 +142,9 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
 		r.Post("/tasks/{taskId}/artifacts", h.UploadTaskArtifact)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
+		r.Post("/tasks/{taskId}/children", h.CreateChildTask)
+		r.Get("/tasks/{taskId}/children", h.ListChildTasks)
+		r.Post("/tasks/{taskId}/waiting", h.SetTaskWaiting)
 
 		r.Get("/issues/{issueId}/gc-check", h.GetIssueGCCheck)
 	})
@@ -272,6 +275,8 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 					r.Get("/tasks", h.ListAgentTasks)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
+					r.Get("/sub-agents", h.ListSubAgents)
+					r.Put("/sub-agents", h.SetSubAgents)
 				})
 			})
 
@@ -313,6 +318,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus) chi.Route
 			// Tasks (user-facing, with ownership check)
 			r.Post("/api/tasks/{taskId}/cancel", h.CancelTaskByUser)
 			r.Post("/api/tasks/{taskId}/retry", h.RetryTask)
+			r.Get("/api/tasks/{taskId}/children", h.ListChildTasksByUser)
 
 			r.Route("/api/chat/sessions", func(r chi.Router) {
 				r.Post("/", h.CreateChatSession)

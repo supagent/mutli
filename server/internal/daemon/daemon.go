@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -64,7 +65,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 			DefaultModel:    cfg.EmbeddedModel,
 			DefaultMaxTurns: cfg.EmbeddedMaxTurns,
 			GeminiAPIKey:    cfg.FallbackAPIKey,
-			MulicaAPIURL:    cfg.ServerBaseURL,
+			MulicaAPIURL:    envOrDefault("MULTICA_SANDBOX_API_URL", cfg.ServerBaseURL),
 		}, logger)
 		if err != nil {
 			logger.Warn("failed to initialize sandbox manager — embedded runtime disabled", "error", err)
@@ -933,6 +934,14 @@ func (d *Daemon) handleTask(ctx context.Context, task Task) {
 		if err := d.client.FailTask(ctx, task.ID, result.Comment); err != nil {
 			taskLog.Error("report blocked task failed", "error", err)
 		}
+	case "waiting":
+		taskLog.Info("task waiting for child tasks")
+		if err := d.client.SetTaskWaiting(ctx, task.ID); err != nil {
+			taskLog.Error("set task waiting failed, falling back to complete", "error", err)
+			if err := d.client.CompleteTask(ctx, task.ID, result.Comment, "", "", "", nil); err != nil {
+				taskLog.Error("complete task fallback also failed", "error", err)
+			}
+		}
 	default:
 		taskLog.Info("task completed", "status", result.Status)
 		if err := d.client.CompleteTask(ctx, task.ID, result.Comment, result.BranchName, result.SessionID, result.WorkDir, result.ArtifactIDs); err != nil {
@@ -956,6 +965,11 @@ func (d *Daemon) handleTask(ctx context.Context, task Task) {
 // buildEmbeddedPrompt constructs a prompt for the embedded agent with the
 // actual issue content included (since the sandbox can't run `multica issue get`).
 func (d *Daemon) buildEmbeddedPrompt(ctx context.Context, task Task) string {
+	// For synthesis tasks (parent reactivated after children complete),
+	// build a prompt with child results.
+	if task.Role == "synthesizer" {
+		return d.buildSynthesisPrompt(ctx, task)
+	}
 	// For comment-triggered tasks, use the comment content directly.
 	if task.TriggerCommentContent != "" {
 		return task.TriggerCommentContent
@@ -979,6 +993,35 @@ func (d *Daemon) buildEmbeddedPrompt(ctx context.Context, task Task) string {
 	return prompt.String()
 }
 
+// buildSynthesisPrompt constructs a prompt for the synthesis phase.
+// The orchestrator is re-invoked with all child task results aggregated.
+func (d *Daemon) buildSynthesisPrompt(ctx context.Context, task Task) string {
+	children, err := d.client.GetChildResults(ctx, task.ID)
+	if err != nil {
+		d.logger.Warn("failed to fetch child results for synthesis", "error", err)
+		return "Your child tasks have completed. Synthesize their results into a coherent response."
+	}
+
+	var b strings.Builder
+	b.WriteString("Your child tasks have completed. Synthesize their results into a single coherent response.\n\n")
+	for _, child := range children {
+		b.WriteString(fmt.Sprintf("## %s (%s)\n", child.AgentName, child.Status))
+		if child.Status == "completed" && child.Output != "" {
+			output := child.Output
+			if len(output) > 4000 {
+				output = output[:4000] + "\n\n[truncated]"
+			}
+			b.WriteString(output)
+		} else if child.Error != "" {
+			b.WriteString(fmt.Sprintf("Error: %s", child.Error))
+		} else {
+			b.WriteString("No output produced.")
+		}
+		b.WriteString("\n\n")
+	}
+	return b.String()
+}
+
 func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.Logger) (TaskResult, error) {
 	if d.sandboxMgr == nil {
 		return TaskResult{}, fmt.Errorf("embedded runtime not configured (missing DAYTONA_API_KEY)")
@@ -996,9 +1039,29 @@ func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.L
 		Model:       d.cfg.EmbeddedModel,
 		MaxTurns:    d.cfg.EmbeddedMaxTurns,
 		Timeout:     d.cfg.AgentTimeout,
+		Role:        task.Role,
 	}
-	if task.Agent != nil && task.Agent.Instructions != "" {
-		opts.SystemPrompt = task.Agent.Instructions
+	if task.Agent != nil {
+		if task.Agent.Instructions != "" {
+			opts.SystemPrompt = task.Agent.Instructions
+		}
+		// Worker tasks should NOT post comments — their output flows to the
+		// orchestrator via synthesis. Override the system prompt to prevent this.
+		if task.Role == "worker" {
+			opts.SystemPrompt += "\n\nIMPORTANT: You are a worker sub-task. Do NOT use add_comment. Just do the work and respond with your output directly. Your results will be collected by the orchestrator."
+		}
+		// Pass sub-agent definitions for multi-agent orchestration.
+		if len(task.Agent.SubAgents) > 0 {
+			opts.SubAgents = make([]agent.SubAgentDef, len(task.Agent.SubAgents))
+			for i, sa := range task.Agent.SubAgents {
+				opts.SubAgents[i] = agent.SubAgentDef{
+					Name:         sa.Name,
+					Description:  sa.Description,
+					Instructions: sa.Instructions,
+				}
+			}
+			taskLog.Info("multi-agent orchestration", "sub_agents", len(opts.SubAgents))
+		}
 	}
 
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, opts, taskLog, task.ID)
@@ -1024,11 +1087,43 @@ func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.L
 		})
 	}
 
+	// Check for child task requests written by create_child_task tool.
+	// The tool writes to /workspace/output/_child_task_requests.json
+	// because sandbox networking may block direct API calls.
+	var childTasksCreated bool
+	if result.Status == "completed" {
+		for _, art := range result.Artifacts {
+			if art.Filename == "_child_task_requests.json" {
+				var requests []struct {
+					AgentName string `json:"agent_name"`
+					Prompt    string `json:"prompt"`
+				}
+				if err := json.Unmarshal(art.Data, &requests); err != nil {
+					taskLog.Warn("failed to parse child task requests", "error", err)
+					break
+				}
+				for _, req := range requests {
+					if err := d.client.CreateChildTask(ctx, task.ID, req.AgentName, req.Prompt); err != nil {
+						taskLog.Error("failed to create child task", "agent", req.AgentName, "error", err)
+					} else {
+						taskLog.Info("child task created", "agent", req.AgentName)
+						childTasksCreated = true
+					}
+				}
+				break
+			}
+		}
+	}
+
 	// Upload extracted artifacts to server and collect attachment IDs.
+	// Skip internal files (prefixed with _).
 	var artifactIDs []string
 	if result.Status == "completed" && len(result.Artifacts) > 0 {
 		taskLog.Info("uploading artifacts", "count", len(result.Artifacts))
 		for _, art := range result.Artifacts {
+			if strings.HasPrefix(art.Filename, "_") {
+				continue // Skip internal files like _child_task_requests.json
+			}
 			id, err := d.client.UploadArtifact(ctx, task.ID, art.Filename, art.ContentType, art.Data)
 			if err != nil {
 				taskLog.Warn("failed to upload artifact", "filename", art.Filename, "error", err)
@@ -1037,6 +1132,16 @@ func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.L
 			artifactIDs = append(artifactIDs, id)
 			taskLog.Info("artifact uploaded", "filename", art.Filename, "attachment_id", id)
 		}
+	}
+
+	// If child tasks were created, enter waiting state.
+	if childTasksCreated {
+		taskLog.Info("child tasks created, entering waiting state")
+		return TaskResult{
+			Status:  "waiting",
+			Comment: result.Output,
+			Usage:   usageEntries,
+		}, nil
 	}
 
 	switch result.Status {
@@ -1264,6 +1369,8 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		var mu sync.Mutex
 		var pendingText strings.Builder
 		var pendingThinking strings.Builder
+		var pendingTextAgent string
+		var pendingThinkingAgent string
 		var batch []TaskMessageData
 		callIDToTool := map[string]string{}
 
@@ -1272,20 +1379,24 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			if pendingThinking.Len() > 0 {
 				s := seq.Add(1)
 				batch = append(batch, TaskMessageData{
-					Seq:     int(s),
-					Type:    "thinking",
-					Content: pendingThinking.String(),
+					Seq:       int(s),
+					Type:      "thinking",
+					Content:   pendingThinking.String(),
+					AgentName: pendingThinkingAgent,
 				})
 				pendingThinking.Reset()
+				pendingThinkingAgent = ""
 			}
 			if pendingText.Len() > 0 {
 				s := seq.Add(1)
 				batch = append(batch, TaskMessageData{
-					Seq:     int(s),
-					Type:    "text",
-					Content: pendingText.String(),
+					Seq:       int(s),
+					Type:      "text",
+					Content:   pendingText.String(),
+					AgentName: pendingTextAgent,
 				})
 				pendingText.Reset()
+				pendingTextAgent = ""
 			}
 			toSend := batch
 			batch = nil
@@ -1328,10 +1439,11 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				s := seq.Add(1)
 				mu.Lock()
 				batch = append(batch, TaskMessageData{
-					Seq:   int(s),
-					Type:  "tool_use",
-					Tool:  msg.Tool,
-					Input: msg.Input,
+					Seq:       int(s),
+					Type:      "tool_use",
+					Tool:      msg.Tool,
+					Input:     msg.Input,
+					AgentName: msg.AgentName,
 				})
 				mu.Unlock()
 			case agent.MessageToolResult:
@@ -1348,15 +1460,28 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				}
 				mu.Lock()
 				batch = append(batch, TaskMessageData{
-					Seq:    int(s),
-					Type:   "tool_result",
-					Tool:   toolName,
-					Output: output,
+					Seq:       int(s),
+					Type:      "tool_result",
+					Tool:      toolName,
+					Output:    output,
+					AgentName: msg.AgentName,
 				})
 				mu.Unlock()
 			case agent.MessageThinking:
 				if msg.Content != "" {
 					mu.Lock()
+					// Flush if agent changed to avoid mixing sub-agent text.
+					if pendingThinking.Len() > 0 && pendingThinkingAgent != msg.AgentName {
+						s := seq.Add(1)
+						batch = append(batch, TaskMessageData{
+							Seq:       int(s),
+							Type:      "thinking",
+							Content:   pendingThinking.String(),
+							AgentName: pendingThinkingAgent,
+						})
+						pendingThinking.Reset()
+					}
+					pendingThinkingAgent = msg.AgentName
 					pendingThinking.WriteString(msg.Content)
 					mu.Unlock()
 				}
@@ -1364,6 +1489,18 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				if msg.Content != "" {
 					taskLog.Debug("agent", "text", truncateLog(msg.Content, 200))
 					mu.Lock()
+					// Flush if agent changed to avoid mixing sub-agent text.
+					if pendingText.Len() > 0 && pendingTextAgent != msg.AgentName {
+						s := seq.Add(1)
+						batch = append(batch, TaskMessageData{
+							Seq:       int(s),
+							Type:      "text",
+							Content:   pendingText.String(),
+							AgentName: pendingTextAgent,
+						})
+						pendingText.Reset()
+					}
+					pendingTextAgent = msg.AgentName
 					pendingText.WriteString(msg.Content)
 					mu.Unlock()
 				}
@@ -1372,8 +1509,18 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				s := seq.Add(1)
 				mu.Lock()
 				batch = append(batch, TaskMessageData{
+					Seq:       int(s),
+					Type:      "error",
+					Content:   msg.Content,
+					AgentName: msg.AgentName,
+				})
+				mu.Unlock()
+			case agent.MessageSetup:
+				s := seq.Add(1)
+				mu.Lock()
+				batch = append(batch, TaskMessageData{
 					Seq:     int(s),
-					Type:    "error",
+					Type:    "setup",
 					Content: msg.Content,
 				})
 				mu.Unlock()
