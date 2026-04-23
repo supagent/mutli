@@ -627,6 +627,8 @@ function TaskRunEntry({ task, allTasks, onRetried }: { task: AgentTask; allTasks
           <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
         ) : task.status === "cancelled" ? (
           <MinusCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        ) : task.status === "waiting" ? (
+          <Clock className="h-3.5 w-3.5 shrink-0 text-info" />
         ) : (
           <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
         )}
@@ -650,7 +652,7 @@ function TaskRunEntry({ task, allTasks, onRetried }: { task: AgentTask; allTasks
         <span className={cn(
           !showRetryButton && "ml-auto",
           "capitalize",
-          task.status === "completed" ? "text-success" : task.status === "cancelled" ? "text-muted-foreground" : "text-destructive",
+          task.status === "completed" ? "text-success" : task.status === "cancelled" ? "text-muted-foreground" : task.status === "waiting" ? "text-info" : "text-destructive",
         )}>
           {task.status}
         </span>
@@ -766,6 +768,10 @@ function TickerPreview({ text }: { text: string }) {
   const stopScroll = useCallback(() => {
     clearInterval(intervalRef.current);
     if (ref.current) ref.current.scrollTo({ left: 0, behavior: "smooth" });
+  }, []);
+
+  useEffect(() => {
+    return () => clearInterval(intervalRef.current);
   }, []);
 
   return (

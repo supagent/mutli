@@ -41,11 +41,11 @@ export function SubAgentsTab({
       const newIds = [...agent.sub_agents.map((sa) => sa.id), subAgentId];
       await api.setSubAgents(agent.id, { sub_agent_ids: newIds });
       qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+      setShowPicker(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to add sub-agent");
     } finally {
       setSaving(false);
-      setShowPicker(false);
     }
   };
 
@@ -125,6 +125,7 @@ export function SubAgentsTab({
                 onClick={() => handleRemove(subAgent.id)}
                 disabled={saving}
                 className="text-muted-foreground hover:text-destructive"
+                aria-label={`Remove ${subAgent.name}`}
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>

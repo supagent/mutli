@@ -105,6 +105,13 @@ func ParseNDJSONLine(raw string) (msg agent.Message, result *agent.Result, ok bo
 			AgentName: ev.AgentName,
 		}, nil, true
 
+	case "setup":
+		return agent.Message{
+			Type:      agent.MessageSetup,
+			Content:   ev.Content,
+			AgentName: ev.AgentName,
+		}, nil, true
+
 	case "result":
 		usage := make(map[string]agent.TokenUsage, len(ev.Usage))
 		for model, u := range ev.Usage {

@@ -1,4 +1,5 @@
 -- Agent sub-agent junction (orchestrator → sub-agents)
+-- Workspace enforcement is handled in the SetSubAgents handler (agent.go).
 
 -- name: ListSubAgents :many
 SELECT a.id, a.name, a.description, a.instructions

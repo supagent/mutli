@@ -938,6 +938,7 @@ WHERE parent_task_id = $1
 ORDER BY created_at ASC
 `
 
+// Access control handled by requireDaemonTaskAccess in the handler layer.
 func (q *Queries) ListChildTasks(ctx context.Context, parentTaskID pgtype.UUID) ([]AgentTaskQueue, error) {
 	rows, err := q.db.Query(ctx, listChildTasks, parentTaskID)
 	if err != nil {

@@ -56,6 +56,7 @@ type ListSubAgentsRow struct {
 }
 
 // Agent sub-agent junction (orchestrator → sub-agents)
+// Workspace enforcement is handled in the SetSubAgents handler (agent.go).
 func (q *Queries) ListSubAgents(ctx context.Context, agentID pgtype.UUID) ([]ListSubAgentsRow, error) {
 	rows, err := q.db.Query(ctx, listSubAgents, agentID)
 	if err != nil {

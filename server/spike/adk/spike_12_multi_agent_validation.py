@@ -398,7 +398,7 @@ async def test_5_shared_tools() -> bool:
 
 # ── Test 7: separate text outputs ───────────────────────────────────────────
 
-async def test_7_separate_outputs() -> bool:
+async def test_7_sub_agent_event_attribution() -> bool:
     """Verify sub-agent events are attributable via event.author.
 
     ADK uses 'transfer_to_agent' as an internal tool call for delegation.
@@ -437,7 +437,7 @@ async def test_7_separate_outputs() -> bool:
         for part in ev["parts"]:
             events_by_author.setdefault(author, []).append(part["type"])
 
-    print(f"  Events by author:")
+    print("  Events by author:")
     for author, event_types in events_by_author.items():
         print(f"    [{author or 'unnamed'}]: {event_types}")
 
@@ -480,7 +480,7 @@ async def main():
         ("4_turn_limiter", test_4_turn_limiter_scope),
         ("5_shared_tools", test_5_shared_tools),
         # Test 6 is a Go unit test (ndparse_test.go)
-        ("7_separate_outputs", test_7_separate_outputs),
+        ("7_sub_agent_event_attribution", test_7_sub_agent_event_attribution),
     ]
 
     for name, test_fn in tests:

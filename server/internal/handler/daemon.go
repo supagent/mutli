@@ -1081,10 +1081,9 @@ func (h *Handler) CreateChildTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load parent task to get workspace context.
-	parent, err := h.Queries.GetAgentTask(r.Context(), parseUUID(parentTaskID))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "parent task not found")
+	// Verify the daemon owns the parent task's workspace.
+	parent, ok := h.requireDaemonTaskAccess(w, r, parentTaskID)
+	if !ok {
 		return
 	}
 

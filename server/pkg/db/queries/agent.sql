@@ -212,6 +212,7 @@ VALUES ($1, $2, $3, $4, $5, 'worker')
 RETURNING *;
 
 -- name: ListChildTasks :many
+-- Access control handled by requireDaemonTaskAccess in the handler layer.
 SELECT * FROM agent_task_queue
 WHERE parent_task_id = $1
 ORDER BY created_at ASC;

@@ -310,6 +310,16 @@ func TestParseNDJSONLine_AgentNamePropagated(t *testing.T) {
 	if msg.AgentName != "researcher" {
 		t.Fatalf("expected AgentName %q, got %q", "researcher", msg.AgentName)
 	}
+
+	// setup with agent_name
+	raw = `{"type":"setup","seq":6,"content":"initializing","agent_name":"orchestrator"}`
+	msg, _, ok = ParseNDJSONLine(raw)
+	if !ok {
+		t.Fatal("expected ok=true for setup with agent_name")
+	}
+	if msg.AgentName != "orchestrator" {
+		t.Fatalf("expected AgentName %q, got %q", "orchestrator", msg.AgentName)
+	}
 }
 
 // TestParseNDJSONLine_AgentNameEmpty verifies events without agent_name
