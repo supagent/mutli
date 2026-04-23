@@ -92,7 +92,7 @@ def make_turn_limiter(max_turns: int):
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-def _load_sub_agents(path: str, model: str, max_turns: int) -> list:
+def _load_sub_agents(path: str, model: str, max_turns: int, tools: list | None = None) -> list:
     """Load sub-agent definitions from JSON and construct ADK Agent objects."""
     if not path or not os.path.exists(path):
         return []
@@ -100,6 +100,7 @@ def _load_sub_agents(path: str, model: str, max_turns: int) -> list:
     with open(path) as f:
         defs = json.load(f)
 
+    agent_tools = tools if tools is not None else ALL_TOOLS
     sub_agents = []
     for sa_def in defs:
         sub_agents.append(Agent(
@@ -107,7 +108,7 @@ def _load_sub_agents(path: str, model: str, max_turns: int) -> list:
             model=model,
             instruction=sa_def.get("instructions", ""),
             description=sa_def.get("description", ""),
-            tools=ALL_TOOLS,
+            tools=agent_tools,
             before_model_callback=make_turn_limiter(max_turns),
         ))
         print(f"[agent] loaded sub-agent: {sa_def['name']}", file=sys.stderr)
@@ -126,26 +127,30 @@ async def run(task_id: str, issue_id: str, prompt: str, model: str, max_turns: i
 
     emitter = NDJSONEmitter(task_id=task_id, issue_id=issue_id, model=model)
 
-    # Load sub-agent definitions for multi-agent orchestration.
-    sub_agents = _load_sub_agents(sub_agents_path, model, max_turns)
-
-    # Phase 1 (sub_agents) and Phase 2 (create_child_task) are mutually exclusive.
-    # When sub_agents are configured, ADK's transfer_to_agent always wins over
-    # create_child_task regardless of instructions. Remove create_child_task to
-    # avoid confusion. When no sub_agents, create_child_task is available for
-    # cross-runtime delegation.
+    # Compute tool restrictions based on task role.
     from tools import create_child_task as _cct, add_comment as _ac, update_issue as _ui
     agent_tools = list(ALL_TOOLS)
-
-    # Phase 1 (sub_agents) and Phase 2 (create_child_task) are mutually exclusive.
-    if sub_agents:
-        agent_tools = [t for t in agent_tools if t is not _cct]
 
     # Workers must not post comments or change issue status — their output
     # flows to the orchestrator via synthesis. Enforced at the tool level
     # because prompt-level instructions are unreliable.
     if task_role == "worker":
         agent_tools = [t for t in agent_tools if t not in (_ac, _ui, _cct)]
+
+    # Load sub-agent definitions for multi-agent orchestration.
+    # Sub-agents receive the same filtered tools as the parent.
+    has_sub_agents = bool(sub_agents_path and os.path.exists(sub_agents_path))
+    if has_sub_agents:
+        # Phase 1 (sub_agents) and Phase 2 (create_child_task) are mutually exclusive.
+        agent_tools = [t for t in agent_tools if t is not _cct]
+
+    try:
+        sub_agents = _load_sub_agents(sub_agents_path, model, max_turns, tools=agent_tools)
+    except Exception as e:
+        print(f"[agent] failed to load sub-agents: {e}", file=sys.stderr)
+        emitter.emit_error(f"Failed to load sub-agents: {e}")
+        sub_agents = []
+
 
     # Combine base system prompt with agent-specific instructions from the DB.
     instruction = SYSTEM_PROMPT

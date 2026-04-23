@@ -590,6 +590,12 @@ func (h *Handler) SetSubAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i, subID := range req.SubAgentIDs {
+		// Verify sub-agent belongs to the same workspace (multi-tenancy guard).
+		subAgent, err := qtx.GetAgent(r.Context(), parseUUID(subID))
+		if err != nil || uuidToString(subAgent.WorkspaceID) != uuidToString(a.WorkspaceID) {
+			writeError(w, http.StatusBadRequest, "sub-agent not found in this workspace: "+subID)
+			return
+		}
 		if err := qtx.AddSubAgent(r.Context(), db.AddSubAgentParams{
 			AgentID:    a.ID,
 			SubAgentID: parseUUID(subID),

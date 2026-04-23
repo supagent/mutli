@@ -1138,6 +1138,9 @@ func (h *Handler) CreateChildTask(w http.ResponseWriter, r *http.Request) {
 // ListChildTasks returns all child tasks for a parent (daemon auth).
 func (h *Handler) ListChildTasks(w http.ResponseWriter, r *http.Request) {
 	parentTaskID := chi.URLParam(r, "taskId")
+	if _, ok := h.requireDaemonTaskAccess(w, r, parentTaskID); !ok {
+		return
+	}
 	children, err := h.Queries.ListChildTasks(r.Context(), parseUUID(parentTaskID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list child tasks")
@@ -1172,6 +1175,9 @@ func (h *Handler) ListChildTasksByUser(w http.ResponseWriter, r *http.Request) {
 // SetTaskWaiting transitions a running task to waiting state.
 func (h *Handler) SetTaskWaiting(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
+	if _, ok := h.requireDaemonTaskAccess(w, r, taskID); !ok {
+		return
+	}
 	if err := h.TaskService.TransitionToWaiting(r.Context(), parseUUID(taskID)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
