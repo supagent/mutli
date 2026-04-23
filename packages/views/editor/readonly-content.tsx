@@ -25,6 +25,7 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { createLowlight, common } from "lowlight";
+// @ts-ignore -- hast-util-to-html v4 has no bundled type declarations (v9 does)
 import { toHtml } from "hast-util-to-html";
 import { Maximize2, Download, Link as LinkIcon, FileText } from "lucide-react";
 import { toast } from "sonner";
