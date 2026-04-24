@@ -172,8 +172,8 @@ async def test_2_parent_with_tools_plus_search_sub_agent() -> bool:
         print("  PASS: Parent delegated to google_search sub-agent")
         return True
     elif has_text:
-        print("  PARTIAL: Got text but no clear delegation (orchestrator may have answered directly)")
-        return True  # Still acceptable — the capability exists
+        print("  FAIL: Got text but delegation was NOT observed (orchestrator answered directly)")
+        return False  # Delegation must be observed to validate the sub-agent path
     else:
         print("  FAIL: no output")
         return False
