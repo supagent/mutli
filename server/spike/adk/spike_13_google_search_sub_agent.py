@@ -17,7 +17,6 @@ Run:
 """
 
 import asyncio
-import json
 import os
 import sys
 import time
@@ -204,21 +203,29 @@ async def test_3_search_results_flow_to_parent() -> bool:
 
     result = await run_agent(orchestrator, "Who won the latest Super Bowl? Be very brief.")
 
-    # Check if the orchestrator's final text references the research
+    # Check delegation: web_researcher must appear in authors or text_by_author
+    delegated = "web_researcher" in result["authors_seen"] or "web_researcher" in result["text_by_author"]
+    has_transfer = any(e[2] == "transfer_to_agent" for e in result["events"] if e[0] == "call")
+
+    # Check if the output contains factual content
     all_text = " ".join(result["text_by_author"].values())
     has_factual_content = any(
         word in all_text.lower()
         for word in ["super bowl", "nfl", "champions", "won", "victory"]
     )
 
+    print(f"  Delegation observed: {delegated or has_transfer}")
     print(f"  Has factual content: {has_factual_content}")
     print(f"  Text preview: {all_text[:150]}")
 
-    if has_factual_content:
-        print("  PASS: Search results flowed to parent and were synthesized")
+    if (delegated or has_transfer) and has_factual_content:
+        print("  PASS: Delegated to web_researcher AND factual content present")
         return True
+    elif has_factual_content and not (delegated or has_transfer):
+        print("  FAIL: Factual content present but delegation was NOT observed")
+        return False
     else:
-        print("  FAIL: No factual content in response (search may not have worked)")
+        print("  FAIL: Missing delegation or factual content")
         return False
 
 
