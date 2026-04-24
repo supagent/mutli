@@ -86,6 +86,7 @@ func (sm *SandboxManager) Execute(ctx context.Context, cfg agent.SandboxTaskConf
 		Timeout:      cfg.Timeout,
 		SubAgents:    cfg.SubAgents,
 		Role:         cfg.Role,
+		ToolsMode:    cfg.ToolsMode,
 	}
 	return sm.execute(ctx, taskCfg)
 }
@@ -150,6 +151,9 @@ func (sm *SandboxManager) execute(ctx context.Context, taskCfg TaskExecConfig) (
 	}
 	if taskCfg.TaskID != "" {
 		envVars["MULTICA_TASK_ID"] = taskCfg.TaskID
+	}
+	if taskCfg.ToolsMode != "" {
+		envVars["MULTICA_TOOLS_MODE"] = taskCfg.ToolsMode
 	}
 
 	sandbox, err := sm.client.Create(runCtx, types.ImageParams{

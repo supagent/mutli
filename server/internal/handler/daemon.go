@@ -365,11 +365,22 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	resp := taskToResponse(*task)
 	if agent, err := h.Queries.GetAgent(r.Context(), task.AgentID); err == nil {
 		skills := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
+		// Extract tools_mode from runtime_config if set.
+		var toolsMode string
+		if agent.RuntimeConfig != nil {
+			var rc map[string]any
+			if json.Unmarshal(agent.RuntimeConfig, &rc) == nil {
+				if tm, ok := rc["tools_mode"].(string); ok {
+					toolsMode = tm
+				}
+			}
+		}
 		agentData := &TaskAgentData{
 			ID:           uuidToString(agent.ID),
 			Name:         agent.Name,
 			Instructions: agent.Instructions,
 			Skills:       skills,
+			ToolsMode:    toolsMode,
 		}
 		// Load sub-agents so the daemon can upload definitions to the sandbox.
 		if subs, err := h.Queries.ListSubAgents(r.Context(), agent.ID); err == nil && len(subs) > 0 {

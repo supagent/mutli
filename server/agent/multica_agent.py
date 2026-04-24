@@ -127,14 +127,23 @@ async def run(task_id: str, issue_id: str, prompt: str, model: str, max_turns: i
 
     emitter = NDJSONEmitter(task_id=task_id, issue_id=issue_id, model=model)
 
-    # Compute tool restrictions based on task role.
+    # Compute tool restrictions based on task role and tools mode.
     from tools import create_child_task as _cct, add_comment as _ac, update_issue as _ui
-    agent_tools = list(ALL_TOOLS)
+
+    tools_mode = os.environ.get("MULTICA_TOOLS_MODE", "")
+    if tools_mode == "search":
+        # Search-only mode: use google_search built-in tool exclusively.
+        # Cannot coexist with function calling tools (Gemini API constraint).
+        from google.adk.tools import google_search
+        agent_tools = [google_search]
+        print("[agent] tools mode: search (google_search only)", file=sys.stderr)
+    else:
+        agent_tools = list(ALL_TOOLS)
 
     # Workers must not post comments or change issue status — their output
     # flows to the orchestrator via synthesis. Enforced at the tool level
     # because prompt-level instructions are unreliable.
-    if task_role == "worker":
+    if task_role == "worker" and tools_mode != "search":
         agent_tools = [t for t in agent_tools if t not in (_ac, _ui, _cct)]
 
     # Load sub-agent definitions for multi-agent orchestration.

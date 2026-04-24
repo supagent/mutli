@@ -1045,6 +1045,9 @@ func (d *Daemon) runEmbeddedTask(ctx context.Context, task Task, taskLog *slog.L
 		if task.Agent.Instructions != "" {
 			opts.SystemPrompt = task.Agent.Instructions
 		}
+		if task.Agent.ToolsMode != "" {
+			opts.ToolsMode = task.Agent.ToolsMode
+		}
 		// Worker tasks should NOT post comments — their output flows to the
 		// orchestrator via synthesis. Override the system prompt to prevent this.
 		if task.Role == "worker" {

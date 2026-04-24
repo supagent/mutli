@@ -31,6 +31,7 @@ type ExecOptions struct {
 	WorkspaceID     string        // workspace ID (for embedded agent API calls)
 	SubAgents       []SubAgentDef // sub-agent definitions for multi-agent orchestration
 	Role            string        // task role: orchestrator, worker, synthesizer
+	ToolsMode       string        // "search" for google_search only, empty for default
 }
 
 // Session represents a running agent execution.

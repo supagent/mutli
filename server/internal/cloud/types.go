@@ -30,4 +30,5 @@ type TaskExecConfig struct {
 	Timeout      time.Duration      // Execution timeout (0 = 20min default)
 	SubAgents    []agent.SubAgentDef // Sub-agent definitions for multi-agent orchestration
 	Role         string              // Task role: orchestrator, worker, synthesizer
+	ToolsMode    string              // "search" for google_search only, empty for default
 }

@@ -38,6 +38,7 @@ type SandboxTaskConfig struct {
 	Timeout      time.Duration
 	SubAgents    []SubAgentDef
 	Role         string
+	ToolsMode    string // "search" for google_search only, empty for default
 }
 
 func (b *EmbeddedBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
@@ -59,5 +60,6 @@ func (b *EmbeddedBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		Timeout:      opts.Timeout,
 		SubAgents:    opts.SubAgents,
 		Role:         opts.Role,
+		ToolsMode:    opts.ToolsMode,
 	})
 }

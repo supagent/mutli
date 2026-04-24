@@ -54,6 +54,7 @@ type AgentData struct {
 	Instructions string         `json:"instructions"`
 	Skills       []SkillData    `json:"skills"`
 	SubAgents    []SubAgentData `json:"sub_agents,omitempty"`
+	ToolsMode    string         `json:"tools_mode,omitempty"`
 }
 
 // SkillData represents a structured skill for task execution.
