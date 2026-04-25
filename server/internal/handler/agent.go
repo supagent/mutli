@@ -123,6 +123,7 @@ type TaskAgentData struct {
 	Instructions string                   `json:"instructions"`
 	Skills       []service.AgentSkillData `json:"skills,omitempty"`
 	SubAgents    []SubAgentDef            `json:"sub_agents,omitempty"`
+	ToolsMode    string                   `json:"tools_mode,omitempty"`
 }
 
 func taskToResponse(t db.AgentTaskQueue) AgentTaskResponse {

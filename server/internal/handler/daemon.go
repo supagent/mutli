@@ -365,11 +365,29 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	resp := taskToResponse(*task)
 	if agent, err := h.Queries.GetAgent(r.Context(), task.AgentID); err == nil {
 		skills := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
+		// Extract and validate tools_mode from runtime_config.
+		// Only "search" is recognized; unknown values are ignored with a warning.
+		var toolsMode string
+		if agent.RuntimeConfig != nil {
+			var rc map[string]any
+			if json.Unmarshal(agent.RuntimeConfig, &rc) == nil {
+				if tm, ok := rc["tools_mode"].(string); ok {
+					switch tm {
+					case "search", "":
+						toolsMode = tm
+					default:
+						slog.Warn("unknown tools_mode in runtime_config, ignoring",
+							"agent_id", uuidToString(agent.ID), "tools_mode", tm)
+					}
+				}
+			}
+		}
 		agentData := &TaskAgentData{
 			ID:           uuidToString(agent.ID),
 			Name:         agent.Name,
 			Instructions: agent.Instructions,
 			Skills:       skills,
+			ToolsMode:    toolsMode,
 		}
 		// Load sub-agents so the daemon can upload definitions to the sandbox.
 		if subs, err := h.Queries.ListSubAgents(r.Context(), agent.ID); err == nil && len(subs) > 0 {
